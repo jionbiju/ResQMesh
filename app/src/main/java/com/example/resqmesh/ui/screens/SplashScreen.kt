@@ -29,7 +29,7 @@ fun SplashScreen(onTimeout: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.primary),
+            .background(MaterialTheme.colorScheme.secondary),
         contentAlignment = Alignment.Center
     ) {
         Box(contentAlignment = Alignment.Center) {
@@ -40,7 +40,7 @@ fun SplashScreen(onTimeout: () -> Unit) {
                 tint = Color.White
             )
             Text(
-                text = "ResQmesh",
+                text = "ResQMesh",
                 color = Color.White,
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
