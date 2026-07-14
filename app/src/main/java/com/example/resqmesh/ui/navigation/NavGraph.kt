@@ -9,11 +9,18 @@ import com.example.resqmesh.ui.screens.LoginScreen
 import com.example.resqmesh.ui.screens.ProfileScreen
 import com.example.resqmesh.ui.screens.SplashScreen
 
-sealed class Screen(val route: String) {
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.ui.graphics.vector.ImageVector
+
+sealed class Screen(val route: String, val title: String = "", val icon: ImageVector? = null) {
     object Splash : Screen("splash")
     object Login : Screen("login")
-    object Profile : Screen("profile")
-    object Home : Screen("home")
+    object Profile : Screen("profile", "Profile", Icons.Default.Person)
+    object Home : Screen("home", "Messages", Icons.Default.Chat)
+    object Tools : Screen("tools", "Tools", Icons.Default.Build)
 }
 
 @Composable
