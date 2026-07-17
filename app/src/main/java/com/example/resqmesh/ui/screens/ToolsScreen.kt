@@ -18,7 +18,7 @@ import androidx.compose.ui.unit.sp
 import com.example.resqmesh.ui.theme.ResQmeshTheme
 
 @Composable
-fun ToolsScreen() {
+fun ToolsScreen(onSurvivalGuideClick: () -> Unit) {
     val tools = listOf(
         ToolItem("Flashlight", Icons.Default.FlashlightOn, Color(0xFFFFD700)),
         ToolItem("Compass", Icons.Default.Explore, Color(0xFF4CAF50)),
@@ -42,19 +42,27 @@ fun ToolsScreen() {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             items(tools.size) { index ->
-                ToolCard(tools[index])
+                val tool = tools[index]
+                ToolCard(
+                    tool = tool,
+                    onClick = {
+                        if (tool.name == "Survival Guide") {
+                            onSurvivalGuideClick()
+                        }
+                    }
+                )
             }
         }
     }
 }
 
 @Composable
-fun ToolCard(tool: ToolItem) {
+fun ToolCard(tool: ToolItem, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .height(120.dp),
-        onClick = { /* Tool Action */ },
+        onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(
@@ -80,6 +88,6 @@ data class ToolItem(val name: String, val icon: ImageVector, val color: Color)
 @Composable
 fun ToolsScreenPreview() {
     ResQmeshTheme() {
-        ToolsScreen()
+        ToolsScreen(onSurvivalGuideClick = {})
     }
 }

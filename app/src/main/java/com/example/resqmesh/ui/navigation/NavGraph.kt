@@ -8,6 +8,7 @@ import com.example.resqmesh.ui.screens.HomeScreen
 import com.example.resqmesh.ui.screens.LoginScreen
 import com.example.resqmesh.ui.screens.ProfileScreen
 import com.example.resqmesh.ui.screens.SplashScreen
+import com.example.resqmesh.ui.screens.SurvivalGuideScreen
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
@@ -21,6 +22,7 @@ sealed class Screen(val route: String, val title: String = "", val icon: ImageVe
     object Profile : Screen("profile", "Profile", Icons.Default.Person)
     object Home : Screen("home", "Messages", Icons.Default.Chat)
     object Tools : Screen("tools", "Tools", Icons.Default.Build)
+    object SurvivalGuide : Screen("survival_guide")
 }
 
 @Composable
@@ -37,14 +39,12 @@ fun NavGraph(navController: NavHostController) {
             })
         }
         composable(Screen.Login.route) {
-            // We will create LoginScreen next
             LoginScreen(
                 onLoginSuccess = { navController.navigate(Screen.Profile.route) },
                 onSkipLogin = { navController.navigate(Screen.Profile.route) }
             )
         }
         composable(Screen.Profile.route) {
-            // We will create ProfileScreen next
             ProfileScreen(onProfileComplete = {
                 navController.navigate(Screen.Home.route) {
                     popUpTo(Screen.Login.route) { inclusive = true }
@@ -52,7 +52,14 @@ fun NavGraph(navController: NavHostController) {
             })
         }
         composable(Screen.Home.route) {
-            HomeScreen()
+            HomeScreen(onNavigateToSurvivalGuide = {
+                navController.navigate(Screen.SurvivalGuide.route)
+            })
+        }
+        composable(Screen.SurvivalGuide.route) {
+            SurvivalGuideScreen(onBackClick = {
+                navController.popBackStack()
+            })
         }
     }
 }

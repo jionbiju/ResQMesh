@@ -16,7 +16,7 @@ import com.example.resqmesh.ui.theme.ResQmeshTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen() {
+fun HomeScreen(onNavigateToSurvivalGuide: () -> Unit) {
     var selectedTab by remember { mutableIntStateOf(0) }
     
     Scaffold(
@@ -78,7 +78,7 @@ fun HomeScreen() {
         Column(modifier = Modifier.padding(paddingValues)) {
             when (selectedTab) {
                 0 -> MessageListSection()
-                1 -> ToolsScreen()
+                1 -> ToolsScreen(onSurvivalGuideClick = onNavigateToSurvivalGuide)
                 2 -> ProfileSettingsSection()
             }
         }
@@ -89,6 +89,6 @@ fun HomeScreen() {
 @Composable
 fun HomeScreenPreview() {
     ResQmeshTheme {
-        HomeScreen()
+        HomeScreen(onNavigateToSurvivalGuide = {})
     }
 }
