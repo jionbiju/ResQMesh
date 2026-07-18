@@ -1,6 +1,7 @@
 package com.example.resqmesh.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -16,7 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun MessageListSection() {
+fun MessageListSection(onPeerClick: (String) -> Unit) {
     val dummyPeers = listOf(
         Peer("Rahul (Medical)", "Active 2m ago", true),
         Peer("Priya", "Active 5m ago", false),
@@ -34,16 +35,18 @@ fun MessageListSection() {
         
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(dummyPeers) { peer ->
-                PeerItem(peer)
+                PeerItem(peer, onClick = { onPeerClick(peer.name) })
             }
         }
     }
 }
 
 @Composable
-fun PeerItem(peer: Peer) {
+fun PeerItem(peer: Peer, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(

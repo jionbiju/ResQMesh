@@ -4,11 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import com.example.resqmesh.ui.screens.HomeScreen
-import com.example.resqmesh.ui.screens.LoginScreen
-import com.example.resqmesh.ui.screens.ProfileScreen
-import com.example.resqmesh.ui.screens.SplashScreen
-import com.example.resqmesh.ui.screens.SurvivalGuideScreen
+import com.example.resqmesh.ui.screens.*
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
@@ -23,6 +19,9 @@ sealed class Screen(val route: String, val title: String = "", val icon: ImageVe
     object Home : Screen("home", "Messages", Icons.Default.Chat)
     object Tools : Screen("tools", "Tools", Icons.Default.Build)
     object SurvivalGuide : Screen("survival_guide")
+    object Chat : Screen("chat/{peerName}") {
+        fun createRoute(peerName: String) = "chat/$peerName"
+    }
 }
 
 @Composable
@@ -52,12 +51,23 @@ fun NavGraph(navController: NavHostController) {
             })
         }
         composable(Screen.Home.route) {
-            HomeScreen(onNavigateToSurvivalGuide = {
-                navController.navigate(Screen.SurvivalGuide.route)
-            })
+            HomeScreen(
+                onNavigateToSurvivalGuide = {
+                    navController.navigate(Screen.SurvivalGuide.route)
+                },
+                onNavigateToChat = { peerName ->
+                    navController.navigate(Screen.Chat.createRoute(peerName))
+                }
+            )
         }
         composable(Screen.SurvivalGuide.route) {
             SurvivalGuideScreen(onBackClick = {
+                navController.popBackStack()
+            })
+        }
+        composable(Screen.Chat.route) { backStackEntry ->
+            val peerName = backStackEntry.arguments?.getString("peerName") ?: "Unknown"
+            ChatScreen(peerName = peerName, onBackClick = {
                 navController.popBackStack()
             })
         }
