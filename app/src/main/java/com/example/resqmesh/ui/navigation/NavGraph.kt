@@ -19,6 +19,7 @@ sealed class Screen(val route: String, val title: String = "", val icon: ImageVe
     object Home : Screen("home", "Messages", Icons.Default.Chat)
     object Tools : Screen("tools", "Tools", Icons.Default.Build)
     object SurvivalGuide : Screen("survival_guide")
+    object SOS : Screen("sos")
     object Chat : Screen("chat/{peerName}") {
         fun createRoute(peerName: String) = "chat/$peerName"
     }
@@ -57,8 +58,16 @@ fun NavGraph(navController: NavHostController) {
                 },
                 onNavigateToChat = { peerName ->
                     navController.navigate(Screen.Chat.createRoute(peerName))
+                },
+                onNavigateToSOS = {
+                    navController.navigate(Screen.SOS.route)
                 }
             )
+        }
+        composable(Screen.SOS.route) {
+            SOSScreen(onBackClick = {
+                navController.popBackStack()
+            })
         }
         composable(Screen.SurvivalGuide.route) {
             SurvivalGuideScreen(onBackClick = {

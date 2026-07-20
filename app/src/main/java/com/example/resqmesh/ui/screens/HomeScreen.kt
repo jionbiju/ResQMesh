@@ -18,7 +18,8 @@ import com.example.resqmesh.ui.theme.ResQmeshTheme
 @Composable
 fun HomeScreen(
     onNavigateToSurvivalGuide: () -> Unit,
-    onNavigateToChat: (String) -> Unit
+    onNavigateToChat: (String) -> Unit,
+    onNavigateToSOS: () -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     
@@ -65,7 +66,7 @@ fun HomeScreen(
         },
         floatingActionButton = {
             LargeFloatingActionButton(
-                onClick = { /* SOS Action */ },
+                onClick = onNavigateToSOS,
                 containerColor = Color.Red,
                 contentColor = Color.White,
                 shape = CircleShape
@@ -92,6 +93,6 @@ fun HomeScreen(
 @Composable
 fun HomeScreenPreview() {
     ResQmeshTheme {
-        HomeScreen(onNavigateToSurvivalGuide = {}, onNavigateToChat = {})
+        HomeScreen(onNavigateToSurvivalGuide = {}, onNavigateToChat = {}, onNavigateToSOS = {})
     }
 }
