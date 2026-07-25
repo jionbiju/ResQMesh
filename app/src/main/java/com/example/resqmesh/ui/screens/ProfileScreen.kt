@@ -5,14 +5,21 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.resqmesh.ui.theme.ResQmeshTheme
+import com.example.resqmesh.util.ResQStorage
+import kotlinx.coroutines.launch
 
 @Composable
 fun ProfileScreen(onProfileComplete: () -> Unit) {
+    val context = LocalContext.current
+    val storage = remember { ResQStorage(context) }
+    val scope = rememberCoroutineScope()
+    
     var name by remember { mutableStateOf("") }
     var selectedRole by remember { mutableStateOf("Survivor") }
     val roles = listOf("Survivor", "Volunteer", "Medical Support", "Rescue Team")
@@ -36,7 +43,7 @@ fun ProfileScreen(onProfileComplete: () -> Unit) {
             fontSize = 14.sp,
             color = MaterialTheme.colorScheme.secondary,
             modifier = Modifier.padding(bottom = 32.dp).align(Alignment.Start)
-                .padding(top =10.dp )
+                .padding(top = 10.dp)
         )
 
         OutlinedTextField(
@@ -50,7 +57,6 @@ fun ProfileScreen(onProfileComplete: () -> Unit) {
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-
             text = "Select Your Role",
             fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold,
@@ -75,7 +81,12 @@ fun ProfileScreen(onProfileComplete: () -> Unit) {
         Spacer(modifier = Modifier.weight(1f))
 
         Button(
-            onClick = onProfileComplete,
+            onClick = {
+                scope.launch {
+                    storage.saveProfile(name, selectedRole)
+                    onProfileComplete()
+                }
+            },
             modifier = Modifier.fillMaxWidth(),
             enabled = name.isNotBlank(),
             shape = MaterialTheme.shapes.medium

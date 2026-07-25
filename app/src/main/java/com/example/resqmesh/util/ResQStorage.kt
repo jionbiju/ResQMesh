@@ -16,11 +16,16 @@ class ResQStorage(private val context: Context) {
     }
 
     val userName: Flow<String?> = context.dataStore.data.map { it[USER_NAME] }
+    val userRole: Flow<String?> = context.dataStore.data.map { it[USER_ROLE] }
 
     suspend fun saveProfile(name: String, role: String) {
         context.dataStore.edit { prefs ->
             prefs[USER_NAME] = name
             prefs[USER_ROLE] = role
         }
+    }
+
+    suspend fun clearAll() {
+        context.dataStore.edit { it.clear() }
     }
 }

@@ -1,10 +1,14 @@
 package com.example.resqmesh.ui.navigation
 
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.example.resqmesh.ui.screens.*
+import com.example.resqmesh.util.ResQStorage
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
@@ -27,14 +31,27 @@ sealed class Screen(val route: String, val title: String = "", val icon: ImageVe
 
 @Composable
 fun NavGraph(navController: NavHostController) {
+    val context = LocalContext.current
+    val storage = remember { ResQStorage(context) }
+    val scope = rememberCoroutineScope()
+    
     NavHost(
         navController = navController,
         startDestination = Screen.Splash.route
     ) {
         composable(Screen.Splash.route) {
             SplashScreen(onTimeout = {
-                navController.navigate(Screen.Login.route) {
-                    popUpTo(Screen.Splash.route) { inclusive = true }
+                scope.launch {
+                    val name = storage.userName.first()
+                    if (name != null) {
+                        navController.navigate(Screen.Home.route) {
+                            popUpTo(Screen.Splash.route) { inclusive = true }
+                        }
+                    } else {
+                        navController.navigate(Screen.Login.route) {
+                            popUpTo(Screen.Splash.route) { inclusive = true }
+                        }
+                    }
                 }
             })
         }
