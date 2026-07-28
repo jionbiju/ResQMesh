@@ -6,8 +6,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -18,6 +22,8 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 fun MessageListSection(onPeerClick: (String) -> Unit) {
+    var isMeshActive by remember { mutableStateOf(false) }
+    
     val dummyPeers = listOf(
         Peer("Rahul (Medical)", "Active 2m ago", true),
         Peer("Priya", "Active 5m ago", false),
@@ -26,6 +32,14 @@ fun MessageListSection(onPeerClick: (String) -> Unit) {
     )
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        // Mesh Status Card
+        MeshStatusCard(
+            isActive = isMeshActive,
+            onToggle = { isMeshActive = !isMeshActive }
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
         Text(
             text = "Nearby Devices",
             fontSize = 18.sp,
@@ -37,6 +51,43 @@ fun MessageListSection(onPeerClick: (String) -> Unit) {
             items(dummyPeers) { peer ->
                 PeerItem(peer, onClick = { onPeerClick(peer.name) })
             }
+        }
+    }
+}
+
+@Composable
+fun MeshStatusCard(isActive: Boolean, onToggle: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isActive) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+        ),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (isActive) Icons.Default.Bluetooth else Icons.Default.BluetoothDisabled,
+                contentDescription = null,
+                tint = if (isActive) MaterialTheme.colorScheme.primary else Color.Gray,
+                modifier = Modifier.size(32.dp)
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (isActive) "Mesh Network Active" else "Mesh Network Offline",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+                Text(
+                    text = if (isActive) "Discovering and relaying..." else "Enable Bluetooth to connect",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+            }
+            Switch(checked = isActive, onCheckedChange = { onToggle() })
         }
     }
 }
