@@ -19,37 +19,47 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.resqmesh.util.BleScanner
 
 @Composable
-fun MessageListSection(onPeerClick: (String) -> Unit) {
-    var isMeshActive by remember { mutableStateOf(false) }
-    
-    val dummyPeers = listOf(
-        Peer("Rahul (Medical)", "Active 2m ago", true),
-        Peer("Priya", "Active 5m ago", false),
-        Peer("Rescue Team Alpha", "Active now", true),
-        Peer("Suresh", "Offline", false)
-    )
+fun MessageListSection(
+    bleScanner: BleScanner,
+    isActive: Boolean,
+    onToggle: () -> Unit,
+    onPeerClick: (String) -> Unit
+) {
+    // Collect discovered peers from the scanner instance provided by HomeScreen
+    val realPeers by bleScanner.foundPeers.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-        // Mesh Status Card
         MeshStatusCard(
-            isActive = isMeshActive,
-            onToggle = { isMeshActive = !isMeshActive }
+            isActive = isActive,
+            onToggle = onToggle
         )
 
         Spacer(modifier = Modifier.height(24.dp))
 
         Text(
-            text = "Nearby Devices",
+            text = if (isActive) "Discovered Devices" else "Recent Conversations",
             fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(bottom = 16.dp)
         )
         
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(dummyPeers) { peer ->
-                PeerItem(peer, onClick = { onPeerClick(peer.name) })
+            if (isActive && realPeers.isEmpty()) {
+                item {
+                    Text("Searching for nearby ResQmesh nodes...", color = Color.Gray, fontSize = 14.sp)
+                }
+            }
+            
+            items(realPeers) { peer ->
+                PeerItem(
+                    name = peer.name,
+                    status = "ID: ${peer.id}",
+                    isOnline = true,
+                    onClick = { onPeerClick(peer.name) }
+                )
             }
         }
     }
@@ -82,7 +92,7 @@ fun MeshStatusCard(isActive: Boolean, onToggle: () -> Unit) {
                     fontSize = 16.sp
                 )
                 Text(
-                    text = if (isActive) "Discovering and relaying..." else "Enable Bluetooth to connect",
+                    text = if (isActive) "Listening for peers..." else "Enable Bluetooth to scan",
                     fontSize = 12.sp,
                     color = Color.Gray
                 )
@@ -93,7 +103,7 @@ fun MeshStatusCard(isActive: Boolean, onToggle: () -> Unit) {
 }
 
 @Composable
-fun PeerItem(peer: Peer, onClick: () -> Unit) {
+fun PeerItem(name: String, status: String, isOnline: Boolean, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -108,15 +118,13 @@ fun PeerItem(peer: Peer, onClick: () -> Unit) {
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(if (peer.isOnline) Color.Green else Color.Gray)
+                    .background(if (isOnline) Color.Green else Color.Gray)
             )
             Spacer(modifier = Modifier.width(16.dp))
             Column {
-                Text(text = peer.name, fontWeight = FontWeight.Bold)
-                Text(text = peer.status, fontSize = 12.sp, color = Color.Gray)
+                Text(text = name, fontWeight = FontWeight.Bold)
+                Text(text = status, fontSize = 12.sp, color = Color.Gray)
             }
         }
     }
 }
-
-data class Peer(val name: String, val status: String, val isOnline: Boolean)

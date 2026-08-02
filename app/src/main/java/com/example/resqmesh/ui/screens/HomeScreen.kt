@@ -9,10 +9,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.resqmesh.ui.theme.ResQmeshTheme
+import com.example.resqmesh.util.BleScanner
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -23,6 +25,11 @@ fun HomeScreen(
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     
+    // Move Hardware State here so it lives as long as the Home screen
+    val context = LocalContext.current
+    val bleScanner = remember { BleScanner(context) }
+    var isMeshActive by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -81,7 +88,15 @@ fun HomeScreen(
     ) { paddingValues ->
         Column(modifier = Modifier.padding(paddingValues)) {
             when (selectedTab) {
-                0 -> MessageListSection(onPeerClick = onNavigateToChat)
+                0 -> MessageListSection(
+                    bleScanner = bleScanner,
+                    isActive = isMeshActive,
+                    onToggle = { 
+                        isMeshActive = !isMeshActive
+                        if (isMeshActive) bleScanner.startScan() else bleScanner.stopScan()
+                    },
+                    onPeerClick = onNavigateToChat
+                )
                 1 -> ToolsScreen(onSurvivalGuideClick = onNavigateToSurvivalGuide)
                 2 -> ProfileSettingsSection()
             }
