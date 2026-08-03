@@ -4,8 +4,11 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
+import android.os.ParcelUuid
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
@@ -27,7 +30,7 @@ class BleScanner(context: Context) {
         @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device = result.device
-            val peerName = try { device.name } catch (e: Exception) { null } ?: "ResQmesh Device"
+            val peerName = device.name ?: "ResQmesh Node"
             val newPeer = DiscoveredPeer(device.address, peerName, result.rssi)
             
             val currentList = _foundPeers.value.toMutableList()
@@ -42,7 +45,17 @@ class BleScanner(context: Context) {
     fun startScan() {
         if (bluetoothAdapter?.isEnabled == true) {
             _foundPeers.value = emptyList()
-            bleScanner?.startScan(scanCallback)
+            
+            // Filter specifically for ResQmesh devices
+            val filter = ScanFilter.Builder()
+                .setServiceUuid(ParcelUuid(BleAdvertiser.SERVICE_UUID))
+                .build()
+            
+            val settings = ScanSettings.Builder()
+                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .build()
+
+            bleScanner?.startScan(listOf(filter), settings, scanCallback)
         }
     }
 

@@ -1,5 +1,9 @@
 package com.example.resqmesh.ui.screens
 
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -14,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.resqmesh.ui.theme.ResQmeshTheme
+import com.example.resqmesh.util.BleAdvertiser
 import com.example.resqmesh.util.BleScanner
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -24,10 +29,11 @@ fun HomeScreen(
     onNavigateToSOS: () -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    
-    // Move Hardware State here so it lives as long as the Home screen
     val context = LocalContext.current
+    
+    // Initialize Hardware Managers
     val bleScanner = remember { BleScanner(context) }
+    val bleAdvertiser = remember { BleAdvertiser(context) }
     var isMeshActive by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -92,8 +98,19 @@ fun HomeScreen(
                     bleScanner = bleScanner,
                     isActive = isMeshActive,
                     onToggle = { 
-                        isMeshActive = !isMeshActive
-                        if (isMeshActive) bleScanner.startScan() else bleScanner.stopScan()
+                        val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+                        if (bluetoothManager.adapter?.isEnabled == false) {
+                            Toast.makeText(context, "Please turn on Bluetooth first", Toast.LENGTH_SHORT).show()
+                        } else {
+                            isMeshActive = !isMeshActive
+                            if (isMeshActive) {
+                                bleScanner.startScan()
+                                bleAdvertiser.startAdvertising("User") // Placeholder name
+                            } else {
+                                bleScanner.stopScan()
+                                bleAdvertiser.stopAdvertising()
+                            }
+                        }
                     },
                     onPeerClick = onNavigateToChat
                 )
