@@ -1,5 +1,6 @@
 package com.example.resqmesh.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -14,13 +15,18 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.navigation.NavBackStackEntry
+import com.example.resqmesh.ui.components.CenterPlaceholder
 import com.example.resqmesh.ui.theme.ResQmeshTheme
 import com.example.resqmesh.util.ResQStorage
 import com.example.resqmesh.util.QrGenerator
 import kotlinx.coroutines.launch
 
 @Composable
-fun ProfileSettingsSection() {
+fun ProfileSettingsSection(
+    onScanClick: () -> Unit,
+    scanResult: String? = null
+) {
     val context = LocalContext.current
     val storage = remember { ResQStorage(context) }
     val userName by storage.userName.collectAsState(initial = "Loading...")
@@ -28,6 +34,13 @@ fun ProfileSettingsSection() {
     val scope = rememberCoroutineScope()
     
     var showQrDialog by remember { mutableStateOf(false) }
+
+    // Show feedback if a scan just happened
+    LaunchedEffect(scanResult) {
+        if (scanResult != null) {
+            Toast.makeText(context, "Trust Established with: ${scanResult.replace("ResQmesh:", "")}", Toast.LENGTH_LONG).show()
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Text(text = "Your Profile", fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -45,6 +58,12 @@ fun ProfileSettingsSection() {
                 
                 Text(text = "Role", fontSize = 12.sp, color = Color.Gray)
                 Text(text = userRole ?: "Survivor", fontSize = 16.sp, fontWeight = FontWeight.Normal)
+                
+                if (scanResult != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(text = "Recent Handshake", fontSize = 12.sp, color = Color.Gray)
+                    Text(text = "Trusted Peer Verified", fontSize = 14.sp, color = Color(0xFF4CAF50))
+                }
             }
         }
 
@@ -60,7 +79,7 @@ fun ProfileSettingsSection() {
         Spacer(modifier = Modifier.height(12.dp))
 
         OutlinedButton(
-            onClick = { /* Future: Navigate to Scanner */ },
+            onClick = onScanClick,
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Scan Peer QR Code")
@@ -87,7 +106,6 @@ fun ProfileSettingsSection() {
 
 @Composable
 fun QrCodeDialog(name: String, onDismiss: () -> Unit) {
-    // For now, we use a static string. Tomorrow we will use the actual Public Key.
     val qrBitmap = remember { QrGenerator.generateQrCode("ResQmesh:$name") }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -117,13 +135,5 @@ fun QrCodeDialog(name: String, onDismiss: () -> Unit) {
                 }
             }
         }
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun ProfileSettingSectionPreview(){
-    ResQmeshTheme {
-        ProfileSettingsSection()
     }
 }

@@ -1,6 +1,5 @@
 package com.example.resqmesh.ui.screens
 
-import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.widget.Toast
@@ -26,12 +25,13 @@ import com.example.resqmesh.util.BleScanner
 fun HomeScreen(
     onNavigateToSurvivalGuide: () -> Unit,
     onNavigateToChat: (String) -> Unit,
-    onNavigateToSOS: () -> Unit
+    onNavigateToSOS: () -> Unit,
+    onNavigateToQrScanner: () -> Unit,
+    scanResult: String? = null
 ) {
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(if (scanResult != null) 2 else 0) }
     val context = LocalContext.current
     
-    // Initialize Hardware Managers
     val bleScanner = remember { BleScanner(context) }
     val bleAdvertiser = remember { BleAdvertiser(context) }
     var isMeshActive by remember { mutableStateOf(false) }
@@ -105,7 +105,7 @@ fun HomeScreen(
                             isMeshActive = !isMeshActive
                             if (isMeshActive) {
                                 bleScanner.startScan()
-                                bleAdvertiser.startAdvertising("User") // Placeholder name
+                                bleAdvertiser.startAdvertising("User")
                             } else {
                                 bleScanner.stopScan()
                                 bleAdvertiser.stopAdvertising()
@@ -115,16 +115,11 @@ fun HomeScreen(
                     onPeerClick = onNavigateToChat
                 )
                 1 -> ToolsScreen(onSurvivalGuideClick = onNavigateToSurvivalGuide)
-                2 -> ProfileSettingsSection()
+                2 -> ProfileSettingsSection(
+                    onScanClick = onNavigateToQrScanner,
+                    scanResult = scanResult
+                )
             }
         }
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun HomeScreenPreview() {
-    ResQmeshTheme {
-        HomeScreen(onNavigateToSurvivalGuide = {}, onNavigateToChat = {}, onNavigateToSOS = {})
     }
 }

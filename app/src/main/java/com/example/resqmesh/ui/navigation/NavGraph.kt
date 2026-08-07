@@ -24,6 +24,7 @@ sealed class Screen(val route: String, val title: String = "", val icon: ImageVe
     object Tools : Screen("tools", "Tools", Icons.Default.Build)
     object SurvivalGuide : Screen("survival_guide")
     object SOS : Screen("sos")
+    object QrScanner : Screen("qr_scanner")
     object Chat : Screen("chat/{peerName}") {
         fun createRoute(peerName: String) = "chat/$peerName"
     }
@@ -68,7 +69,10 @@ fun NavGraph(navController: NavHostController) {
                 }
             })
         }
-        composable(Screen.Home.route) {
+        composable(Screen.Home.route) { backStackEntry ->
+            // Extract scan result if returning from scanner
+            val scanResult = backStackEntry.savedStateHandle.get<String>("scan_result")
+            
             HomeScreen(
                 onNavigateToSurvivalGuide = {
                     navController.navigate(Screen.SurvivalGuide.route)
@@ -78,6 +82,21 @@ fun NavGraph(navController: NavHostController) {
                 },
                 onNavigateToSOS = {
                     navController.navigate(Screen.SOS.route)
+                },
+                onNavigateToQrScanner = {
+                    navController.navigate(Screen.QrScanner.route)
+                },
+                scanResult = scanResult
+            )
+        }
+        composable(Screen.QrScanner.route) {
+            QrScannerScreen(
+                onResultScanned = { result ->
+                    navController.previousBackStackEntry?.savedStateHandle?.set("scan_result", result)
+                    navController.popBackStack()
+                },
+                onBackClick = {
+                    navController.popBackStack()
                 }
             )
         }
