@@ -1,6 +1,6 @@
 package com.example.resqmesh.ui.screens
 
-import androidx.compose.foundation.background
+import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -13,36 +13,39 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.resqmesh.data.repository.ChatRepository
+import com.example.resqmesh.domain.models.ChatMessage
+import com.example.resqmesh.service.GattClientManager
 import com.example.resqmesh.ui.theme.ResQmeshTheme
-
-data class ChatMessage(
-    val text: String,
-    val isFromMe: Boolean,
-    val timestamp: String
-)
+import java.text.SimpleDateFormat
+import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(peerName: String, onBackClick: () -> Unit) {
+fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
+    val context = LocalContext.current
+    val clientManager = remember { GattClientManager(context) }
     var messageText by remember { mutableStateOf("") }
+    var isSending by remember { mutableStateOf(false) }
     
-    // Dummy messages for UI testing
-    val messages = remember {
-        mutableStateListOf(
-            ChatMessage("Hello! Are you safe?", false, "10:00 AM"),
-            ChatMessage("Yes, I am at the community center.", true, "10:02 AM"),
-            ChatMessage("Do you have extra water?", false, "10:05 AM")
-        )
-    }
+    // Observe messages from repository
+    val allMessages by ChatRepository.allMessages.collectAsState()
+    val messages = allMessages.filter { it.peerId == peerId }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(peerName, fontWeight = FontWeight.Bold) },
+                title = { 
+                    Column {
+                        Text(peerName, fontWeight = FontWeight.Bold)
+                        Text("ID: $peerId", fontSize = 10.sp, fontWeight = FontWeight.Normal)
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
@@ -54,16 +57,37 @@ fun ChatScreen(peerName: String, onBackClick: () -> Unit) {
             )
         },
         bottomBar = {
-            BottomMessageBar(
-                text = messageText,
-                onTextChange = { messageText = it },
-                onSendClick = {
-                    if (messageText.isNotBlank()) {
-                        messages.add(ChatMessage(messageText, true, "Now"))
-                        messageText = ""
-                    }
+            Column {
+                if (isSending) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
-            )
+                BottomMessageBar(
+                    text = messageText,
+                    onTextChange = { messageText = it },
+                    onSendClick = {
+                        if (messageText.isNotBlank() && !isSending) {
+                            val msgToSend = messageText
+                            isSending = true
+                            clientManager.sendMessage(peerId, msgToSend) { success ->
+                                isSending = false
+                                if (success) {
+                                    // Save sent message to repository
+                                    ChatRepository.addMessage(
+                                        ChatMessage(
+                                            peerId = peerId,
+                                            text = msgToSend,
+                                            isFromMe = true
+                                        )
+                                    )
+                                    messageText = ""
+                                } else {
+                                    Toast.makeText(context, "Delivery failed. Peer offline.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
+                )
+            }
         }
     ) { paddingValues ->
         LazyColumn(
@@ -91,6 +115,8 @@ fun ChatBubble(message: ChatMessage) {
         RoundedCornerShape(16.dp, 16.dp, 16.dp, 0.dp)
     }
 
+    val timeString = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(message.timestamp))
+
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = alignment) {
         Column(horizontalAlignment = if (message.isFromMe) Alignment.End else Alignment.Start) {
             Surface(
@@ -106,7 +132,7 @@ fun ChatBubble(message: ChatMessage) {
                 )
             }
             Text(
-                text = message.timestamp,
+                text = timeString,
                 fontSize = 10.sp,
                 color = Color.Gray,
                 modifier = Modifier.padding(top = 4.dp)
@@ -136,7 +162,7 @@ fun BottomMessageBar(
                 value = text,
                 onValueChange = onTextChange,
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Type an offline message...") },
+                placeholder = { Text("Type offline...") },
                 maxLines = 3,
                 shape = RoundedCornerShape(24.dp)
             )
@@ -158,6 +184,6 @@ fun BottomMessageBar(
 @Composable
 fun ChatScreenPreview() {
     ResQmeshTheme {
-        ChatScreen(peerName = String(), onBackClick = {})
+        ChatScreen(peerId = "00:11:22:33:44:55", peerName = "Test Peer", onBackClick = {})
     }
 }

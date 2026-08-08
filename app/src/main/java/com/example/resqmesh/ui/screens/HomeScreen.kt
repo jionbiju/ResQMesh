@@ -19,12 +19,13 @@ import androidx.compose.ui.unit.dp
 import com.example.resqmesh.ui.theme.ResQmeshTheme
 import com.example.resqmesh.util.BleAdvertiser
 import com.example.resqmesh.util.BleScanner
+import com.example.resqmesh.service.GattServerManager
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onNavigateToSurvivalGuide: () -> Unit,
-    onNavigateToChat: (String) -> Unit,
+    onNavigateToChat: (String, String) -> Unit,
     onNavigateToSOS: () -> Unit,
     onNavigateToQrScanner: () -> Unit,
     scanResult: String? = null
@@ -34,6 +35,7 @@ fun HomeScreen(
     
     val bleScanner = remember { BleScanner(context) }
     val bleAdvertiser = remember { BleAdvertiser(context) }
+    val gattServer = remember { GattServerManager(context) }
     var isMeshActive by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -106,9 +108,11 @@ fun HomeScreen(
                             if (isMeshActive) {
                                 bleScanner.startScan()
                                 bleAdvertiser.startAdvertising("User")
+                                gattServer.startServer()
                             } else {
                                 bleScanner.stopScan()
                                 bleAdvertiser.stopAdvertising()
+                                gattServer.stopServer()
                             }
                         }
                     },
@@ -121,5 +125,18 @@ fun HomeScreen(
                 )
             }
         }
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun HomeScreenPreview() {
+    ResQmeshTheme {
+        HomeScreen(
+            onNavigateToSurvivalGuide = {},
+            onNavigateToChat = { _, _ -> },
+            onNavigateToSOS = {},
+            onNavigateToQrScanner = {}
+        )
     }
 }

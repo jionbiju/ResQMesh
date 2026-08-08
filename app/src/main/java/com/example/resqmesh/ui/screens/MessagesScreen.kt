@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -26,9 +27,8 @@ fun MessageListSection(
     bleScanner: BleScanner,
     isActive: Boolean,
     onToggle: () -> Unit,
-    onPeerClick: (String) -> Unit
+    onPeerClick: (String, String) -> Unit
 ) {
-    // Collect discovered peers from the scanner instance provided by HomeScreen
     val realPeers by bleScanner.foundPeers.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
@@ -58,7 +58,7 @@ fun MessageListSection(
                     name = peer.name,
                     status = "ID: ${peer.id}",
                     isOnline = true,
-                    onClick = { onPeerClick(peer.name) }
+                    onClick = { onPeerClick(peer.id, peer.name) }
                 )
             }
         }

@@ -25,8 +25,8 @@ sealed class Screen(val route: String, val title: String = "", val icon: ImageVe
     object SurvivalGuide : Screen("survival_guide")
     object SOS : Screen("sos")
     object QrScanner : Screen("qr_scanner")
-    object Chat : Screen("chat/{peerName}") {
-        fun createRoute(peerName: String) = "chat/$peerName"
+    object Chat : Screen("chat/{peerId}/{peerName}") {
+        fun createRoute(peerId: String, peerName: String) = "chat/$peerId/$peerName"
     }
 }
 
@@ -70,15 +70,14 @@ fun NavGraph(navController: NavHostController) {
             })
         }
         composable(Screen.Home.route) { backStackEntry ->
-            // Extract scan result if returning from scanner
             val scanResult = backStackEntry.savedStateHandle.get<String>("scan_result")
             
             HomeScreen(
                 onNavigateToSurvivalGuide = {
                     navController.navigate(Screen.SurvivalGuide.route)
                 },
-                onNavigateToChat = { peerName ->
-                    navController.navigate(Screen.Chat.createRoute(peerName))
+                onNavigateToChat = { peerId, peerName ->
+                    navController.navigate(Screen.Chat.createRoute(peerId, peerName))
                 },
                 onNavigateToSOS = {
                     navController.navigate(Screen.SOS.route)
@@ -111,8 +110,9 @@ fun NavGraph(navController: NavHostController) {
             })
         }
         composable(Screen.Chat.route) { backStackEntry ->
+            val peerId = backStackEntry.arguments?.getString("peerId") ?: ""
             val peerName = backStackEntry.arguments?.getString("peerName") ?: "Unknown"
-            ChatScreen(peerName = peerName, onBackClick = {
+            ChatScreen(peerId = peerId, peerName = peerName, onBackClick = {
                 navController.popBackStack()
             })
         }
