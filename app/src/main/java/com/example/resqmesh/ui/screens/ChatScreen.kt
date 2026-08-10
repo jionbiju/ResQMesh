@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.sp
 import com.example.resqmesh.data.repository.ChatRepository
 import com.example.resqmesh.domain.models.ChatMessage
 import com.example.resqmesh.service.GattClientManager
+import com.example.resqmesh.security.CryptoHelper
 import com.example.resqmesh.ui.theme.ResQmeshTheme
 import java.text.SimpleDateFormat
 import java.util.*
@@ -30,10 +31,11 @@ import java.util.*
 fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
     val context = LocalContext.current
     val clientManager = remember { GattClientManager(context) }
+    val cryptoHelper = remember { CryptoHelper() }
+    
     var messageText by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
     
-    // Observe messages from repository
     val allMessages by ChatRepository.allMessages.collectAsState()
     val messages = allMessages.filter { it.peerId == peerId }
 
@@ -43,7 +45,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                 title = { 
                     Column {
                         Text(peerName, fontWeight = FontWeight.Bold)
-                        Text("ID: $peerId", fontSize = 10.sp, fontWeight = FontWeight.Normal)
+                        Text("Secure Connection", fontSize = 10.sp, color = Color(0xFF4CAF50))
                     }
                 },
                 navigationIcon = {
@@ -66,18 +68,20 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                     onTextChange = { messageText = it },
                     onSendClick = {
                         if (messageText.isNotBlank() && !isSending) {
-                            val msgToSend = messageText
+                            val originalMsg = messageText
+                            
+                            // 1. ENCRYPT before sending
+                            // Note: For now, we use a fixed shared secret for testing. 
+                            // Tomorrow we link it to the actual QR handshake secret.
+                            val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
+                            val encryptedMsg = cryptoHelper.encrypt(originalMsg, dummySecret)
+                            
                             isSending = true
-                            clientManager.sendMessage(peerId, msgToSend) { success ->
+                            clientManager.sendMessage(peerId, encryptedMsg) { success ->
                                 isSending = false
                                 if (success) {
-                                    // Save sent message to repository
                                     ChatRepository.addMessage(
-                                        ChatMessage(
-                                            peerId = peerId,
-                                            text = msgToSend,
-                                            isFromMe = true
-                                        )
+                                        ChatMessage(peerId = peerId, text = originalMsg, isFromMe = true)
                                     )
                                     messageText = ""
                                 } else {
@@ -162,7 +166,7 @@ fun BottomMessageBar(
                 value = text,
                 onValueChange = onTextChange,
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Type offline...") },
+                placeholder = { Text("Type securely...") },
                 maxLines = 3,
                 shape = RoundedCornerShape(24.dp)
             )

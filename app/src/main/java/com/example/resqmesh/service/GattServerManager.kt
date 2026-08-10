@@ -6,11 +6,13 @@ import android.content.Context
 import android.util.Log
 import com.example.resqmesh.data.repository.ChatRepository
 import com.example.resqmesh.domain.models.ChatMessage
+import com.example.resqmesh.security.CryptoHelper
 import java.util.*
 
 class GattServerManager(private val context: Context) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private var gattServer: BluetoothGattServer? = null
+    private val cryptoHelper = CryptoHelper()
 
     companion object {
         val SERVICE_UUID: UUID = UUID.fromString("0000180D-0000-1000-8000-00805f9b34fb")
@@ -37,15 +39,18 @@ class GattServerManager(private val context: Context) {
             super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value)
             
             if (characteristic?.uuid == MESSAGE_CHARACTERISTIC_UUID) {
-                val receivedText = value?.toString(Charsets.UTF_8) ?: ""
-                Log.d("GattServer", "Received: $receivedText")
+                val encryptedText = value?.toString(Charsets.UTF_8) ?: ""
+                Log.d("GattServer", "Received Ciphertext: $encryptedText")
                 
-                // Save to repository so UI can see it
+                // 1. DECRYPT on receive
+                val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
+                val decryptedText = cryptoHelper.decrypt(encryptedText, dummySecret) ?: "[Decryption Failed]"
+                
                 if (device != null) {
                     ChatRepository.addMessage(
                         ChatMessage(
                             peerId = device.address,
-                            text = receivedText,
+                            text = decryptedText,
                             isFromMe = false
                         )
                     )
