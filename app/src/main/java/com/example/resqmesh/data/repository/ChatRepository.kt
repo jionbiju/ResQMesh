@@ -4,21 +4,18 @@ import com.example.resqmesh.domain.models.ChatMessage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.map
 
 object ChatRepository {
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val allMessages: StateFlow<List<ChatMessage>> = _messages.asStateFlow()
 
-    fun getMessagesForPeer(peerId: String): StateFlow<List<ChatMessage>> {
-        // In a real app, this would be a filtered flow from the DB
-        return _messages.map { list -> 
-            list.filter { it.peerId == peerId } 
-        }.let { 
-            val state = MutableStateFlow<List<ChatMessage>>(emptyList())
-            // This is a bit simplified for now to avoid complex flow logic
-            _messages.asStateFlow()
-        }
+    // Cache of message IDs we've already seen/processed
+    private val seenMessageIds = mutableSetOf<String>()
+
+    fun isMessageNew(messageId: String): Boolean {
+        if (seenMessageIds.contains(messageId)) return false
+        seenMessageIds.add(messageId)
+        return true
     }
 
     fun addMessage(message: ChatMessage) {
