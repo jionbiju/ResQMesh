@@ -12,10 +12,11 @@ import java.util.*
 
 class GattServerManager(private val context: Context) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
     private var gattServer: BluetoothGattServer? = null
     private val cryptoHelper = CryptoHelper()
     private val gson = Gson()
+
+    private val messageBuffer = StringBuilder()
 
     companion object {
         val SERVICE_UUID: UUID = UUID.fromString("0000180D-0000-1000-8000-00805f9b34fb")
@@ -35,29 +36,25 @@ class GattServerManager(private val context: Context) {
         ) {
             super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value)
             
-            if (characteristic?.uuid == MESSAGE_CHARACTERISTIC_UUID) {
-                val jsonPayload = value?.toString(Charsets.UTF_8) ?: ""
-                try {
-                    val meshMessage = gson.fromJson(jsonPayload, ChatMessage::class.java)
-                    
-                    // 1. DEDUPLICATION
-                    if (!ChatRepository.isMessageNew(meshMessage.messageId)) return
-
-                    // 2. IS IT FOR ME?
-                    val myAddress = bluetoothAdapter?.address ?: "SELF"
-                    if (meshMessage.destinationId == myAddress || meshMessage.destinationId == "BROADCAST") {
-                        val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
-                        val decryptedText = cryptoHelper.decrypt(meshMessage.text, dummySecret) ?: "[Encrypted]"
-                        ChatRepository.addMessage(meshMessage.copy(text = decryptedText, isFromMe = false))
-                    } 
-                    
-                    // 3. RELAY LOGIC
-                    if (meshMessage.ttl > 0 && meshMessage.destinationId != myAddress) {
-                        relayMessage(meshMessage.copy(ttl = meshMessage.ttl - 1))
+            if (characteristic?.uuid == MESSAGE_CHARACTERISTIC_UUID && value != null) {
+                val dataStr = String(value, Charsets.UTF_8)
+                Log.d("GattServer", "Chunk Received: $dataStr")
+                
+                when {
+                    dataStr.startsWith("START:") -> {
+                        messageBuffer.setLength(0)
+                        messageBuffer.append(dataStr.substring(6))
                     }
-
-                } catch (e: Exception) {
-                    Log.e("GattServer", "Mesh Parse Error: ${e.message}")
+                    dataStr.startsWith("MID:") -> {
+                        messageBuffer.append(dataStr.substring(4))
+                    }
+                    dataStr.startsWith("END:") -> {
+                        messageBuffer.append(dataStr.substring(4))
+                        processFullMessage(messageBuffer.toString())
+                    }
+                    else -> {
+                        processFullMessage(dataStr)
+                    }
                 }
                 
                 if (responseNeeded && device != null) {
@@ -67,10 +64,19 @@ class GattServerManager(private val context: Context) {
         }
     }
 
-    private fun relayMessage(message: ChatMessage) {
-        Log.d("GattServer", "Relaying message ${message.messageId} to ${message.destinationId}")
-        val client = GattClientManager(context)
-        // Find nearby peers and re-send. For now, we log the relay intent.
+    private fun processFullMessage(jsonPayload: String) {
+        try {
+            val meshMessage = gson.fromJson(jsonPayload, ChatMessage::class.java)
+            if (!ChatRepository.isMessageNew(meshMessage.messageId)) return
+
+            val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
+            val decryptedText = cryptoHelper.decrypt(meshMessage.text, dummySecret) ?: "[Encrypted]"
+            
+            ChatRepository.addMessage(meshMessage.copy(text = decryptedText, isFromMe = false))
+            Log.d("GattServer", "Full Message Reassembled and Decrypted: $decryptedText")
+        } catch (e: Exception) {
+            Log.e("GattServer", "Reassembly Error: ${e.message}")
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -84,7 +90,7 @@ class GattServerManager(private val context: Context) {
         )
         service.addCharacteristic(messageChar)
         gattServer?.addService(service)
-        Log.d("GattServer", "Mesh Node Online")
+        Log.d("GattServer", "GATT Server Online (Chunking Mode)")
     }
 
     @SuppressLint("MissingPermission")

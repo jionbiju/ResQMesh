@@ -23,6 +23,7 @@ import com.example.resqmesh.domain.models.ChatMessage
 import com.example.resqmesh.service.GattClientManager
 import com.example.resqmesh.security.CryptoHelper
 import com.example.resqmesh.ui.theme.ResQmeshTheme
+import com.google.gson.Gson
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -32,6 +33,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
     val context = LocalContext.current
     val clientManager = remember { GattClientManager(context) }
     val cryptoHelper = remember { CryptoHelper() }
+    val gson = remember { Gson() }
     
     var messageText by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
@@ -76,12 +78,26 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                             val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
                             val encryptedMsg = cryptoHelper.encrypt(originalMsg, dummySecret)
                             
+                            // 2. Wrap in ChatMessage for the mesh protocol
+                            val meshMessage = ChatMessage(
+                                senderId = "Me", // In real use, this would be our local device ID
+                                destinationId = peerId,
+                                text = encryptedMsg,
+                                isFromMe = true
+                            )
+                            val jsonPayload = gson.toJson(meshMessage)
+                            
                             isSending = true
-                            clientManager.sendMessage(peerId, encryptedMsg) { success ->
+                            clientManager.sendMessage(peerId, jsonPayload) { success ->
                                 isSending = false
                                 if (success) {
                                     ChatRepository.addMessage(
-                                        ChatMessage(peerId = peerId, text = originalMsg, isFromMe = true)
+                                        ChatMessage(
+                                            senderId = "Me",
+                                            destinationId = peerId,
+                                            text = originalMsg, // Add the plaintext locally
+                                            isFromMe = true
+                                        )
                                     )
                                     messageText = ""
                                 } else {
