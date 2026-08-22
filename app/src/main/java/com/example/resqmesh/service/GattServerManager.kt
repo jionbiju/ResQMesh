@@ -19,8 +19,9 @@ class GattServerManager(private val context: Context) {
     private val messageBuffer = StringBuilder()
 
     companion object {
-        val SERVICE_UUID: UUID = UUID.fromString("0000180D-0000-1000-8000-00805f9b34fb")
-        val MESSAGE_CHARACTERISTIC_UUID: UUID = UUID.fromString("00002A37-0000-1000-8000-00805f9b34fb")
+        // NEW: Unique ResQmesh UUIDs (No longer Heart Rate placeholders)
+        val SERVICE_UUID: UUID = UUID.fromString("8f83db5d-0043-41c8-89c0-67c9c0b621e2")
+        val MESSAGE_CHARACTERISTIC_UUID: UUID = UUID.fromString("3f99f928-8742-45e0-9e6b-a25e24c52084")
     }
 
     private val gattServerCallback = object : BluetoothGattServerCallback() {
@@ -36,24 +37,35 @@ class GattServerManager(private val context: Context) {
         ) {
             super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value)
             
+            // Fix 6: Check for preparedWrite (unsupported in our simple chunking protocol)
+            if (preparedWrite) {
+                if (responseNeeded && device != null) {
+                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, 0, null)
+                }
+                return
+            }
+
             if (characteristic?.uuid == MESSAGE_CHARACTERISTIC_UUID && value != null) {
                 val dataStr = String(value, Charsets.UTF_8)
-                Log.d("GattServer", "Chunk Received: $dataStr")
                 
+                // Fix 1: Unified 5-character protocol headers
                 when {
-                    dataStr.startsWith("START:") -> {
+                    dataStr.startsWith("STRT:") -> {
                         messageBuffer.setLength(0)
-                        messageBuffer.append(dataStr.substring(6))
+                        messageBuffer.append(dataStr.substring(5))
                     }
-                    dataStr.startsWith("MID:") -> {
-                        messageBuffer.append(dataStr.substring(4))
+                    dataStr.startsWith("DATA:") -> {
+                        messageBuffer.append(dataStr.substring(5))
                     }
-                    dataStr.startsWith("END:") -> {
-                        messageBuffer.append(dataStr.substring(4))
-                        processFullMessage(messageBuffer.toString())
+                    dataStr.startsWith("DONE:") -> {
+                        messageBuffer.append(dataStr.substring(5))
+                        processFullMessage(messageBuffer.toString(), device?.address ?: "Unknown")
+                    }
+                    dataStr.startsWith("SOLO:") -> {
+                        processFullMessage(dataStr.substring(5), device?.address ?: "Unknown")
                     }
                     else -> {
-                        processFullMessage(dataStr)
+                        processFullMessage(dataStr, device?.address ?: "Unknown")
                     }
                 }
                 
@@ -64,18 +76,28 @@ class GattServerManager(private val context: Context) {
         }
     }
 
-    private fun processFullMessage(jsonPayload: String) {
+    private fun processFullMessage(jsonPayload: String, deviceAddress: String) {
         try {
             val meshMessage = gson.fromJson(jsonPayload, ChatMessage::class.java)
             if (!ChatRepository.isMessageNew(meshMessage.messageId)) return
 
+            // Fix 3: EXACT 32-byte key (Removed the 33rd character)
             val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
             val decryptedText = cryptoHelper.decrypt(meshMessage.text, dummySecret) ?: "[Encrypted]"
             
-            ChatRepository.addMessage(meshMessage.copy(text = decryptedText, isFromMe = false))
-            Log.d("GattServer", "Full Message Reassembled and Decrypted: $decryptedText")
+            // Fix 2: SenderId mapping logic verified
+            val finalPeerId = if (meshMessage.senderId == "02:00:00:00:00:00") deviceAddress else meshMessage.senderId
+            
+            val receivedMessage = meshMessage.copy(
+                senderId = finalPeerId,
+                text = decryptedText,
+                isFromMe = false
+            )
+            
+            ChatRepository.addMessage(receivedMessage)
+            Log.d("GattServer", "Delivered: $decryptedText")
         } catch (e: Exception) {
-            Log.e("GattServer", "Reassembly Error: ${e.message}")
+            Log.e("GattServer", "JSON/Crypto Error: ${e.message}")
         }
     }
 
@@ -90,7 +112,6 @@ class GattServerManager(private val context: Context) {
         )
         service.addCharacteristic(messageChar)
         gattServer?.addService(service)
-        Log.d("GattServer", "GATT Server Online (Chunking Mode)")
     }
 
     @SuppressLint("MissingPermission")

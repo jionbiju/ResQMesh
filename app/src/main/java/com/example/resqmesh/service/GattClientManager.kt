@@ -22,36 +22,39 @@ class GattClientManager(private val context: Context) {
     fun sendMessage(deviceAddress: String, messageText: String, isBroadcast: Boolean = false, onResult: (Boolean) -> Unit) {
         val device = bluetoothAdapter?.getRemoteDevice(deviceAddress) ?: return
         
-        // 1. Prepare the full payload
+        // Fix 3: EXACT 32-byte key (Removing the 33rd character)
         val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
         val encryptedText = cryptoHelper.encrypt(messageText, dummySecret)
+
+        // Fix 2: Use the sentinel address the server expects
+        val myAddress = "02:00:00:00:00:00"
+        
         val meshMessage = ChatMessage(
             messageId = UUID.randomUUID().toString(),
-            senderId = "ME",
+            senderId = myAddress,
             destinationId = if (isBroadcast) "BROADCAST" else deviceAddress,
             text = encryptedText,
-            isFromMe = true,
+            isFromMe = false, // Clean local-only field on wire
             timestamp = System.currentTimeMillis(),
             ttl = 3
         )
-        val fullPayload = gson.toJson(meshMessage).toByteArray(Charsets.UTF_8)
-
-        // 2. Split into chunks (Safe size for all Android devices)
+        
+        val jsonPayload = gson.toJson(meshMessage).toByteArray(Charsets.UTF_8)
         val chunkSize = 150 
-        val chunks = fullPayload.indices.step(chunkSize).map { 
-            fullPayload.sliceArray(it until (it + chunkSize).coerceAtMost(fullPayload.size))
+        val chunks = jsonPayload.indices.step(chunkSize).map { 
+            jsonPayload.sliceArray(it until (it + chunkSize).coerceAtMost(jsonPayload.size))
         }
 
-        var currentChunkIndex = 0
-        var connectionFinished = false
+        var currentChunk = 0
+        var isDone = false
 
         device.connectGatt(context, false, object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     gatt?.requestMtu(512)
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    if (!connectionFinished) {
-                        connectionFinished = true
+                    if (!isDone) {
+                        isDone = true
                         mainHandler.post { onResult(false) }
                     }
                     gatt?.close()
@@ -59,49 +62,59 @@ class GattClientManager(private val context: Context) {
             }
 
             override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
-                gatt?.discoverServices()
+                mainHandler.postDelayed({ gatt?.discoverServices() }, 200)
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-                sendNextChunk(gatt)
+                sendNext(gatt)
             }
 
-            private fun sendNextChunk(gatt: BluetoothGatt?) {
+            private fun sendNext(gatt: BluetoothGatt?) {
                 val service = gatt?.getService(GattServerManager.SERVICE_UUID)
                 val char = service?.getCharacteristic(GattServerManager.MESSAGE_CHARACTERISTIC_UUID)
                 
-                if (char != null && currentChunkIndex < chunks.size) {
-                    // Add a prefix to tell the receiver if this is the START, MIDDLE, or END
-                    val prefix = if (currentChunkIndex == 0) "START:" else if (currentChunkIndex == chunks.size - 1) "END:" else "MID:"
-                    val chunkData = prefix.toByteArray(Charsets.UTF_8) + chunks[currentChunkIndex]
-                    
-                    char.value = chunkData
+                if (char != null && currentChunk < chunks.size) {
+                    // Fix 1: Protocol Header Alignment
+                    val header = when {
+                        chunks.size == 1 -> "SOLO:"
+                        currentChunk == 0 -> "STRT:"
+                        currentChunk == chunks.size - 1 -> "DONE:"
+                        else -> "DATA:"
+                    }
+                    char.value = header.toByteArray(Charsets.UTF_8) + chunks[currentChunk]
                     gatt.writeCharacteristic(char)
                 }
             }
 
             override fun onCharacteristicWrite(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    currentChunkIndex++
-                    if (currentChunkIndex < chunks.size) {
-                        sendNextChunk(gatt)
+                    currentChunk++
+                    if (currentChunk < chunks.size) {
+                        sendNext(gatt)
                     } else {
-                        connectionFinished = true
+                        isDone = true
                         mainHandler.post { onResult(true) }
                         gatt?.disconnect()
                     }
                 } else {
-                    connectionFinished = true
+                    isDone = true
                     mainHandler.post { onResult(false) }
                     gatt?.disconnect()
                 }
             }
-        })
+        }, BluetoothDevice.TRANSPORT_LE)
     }
 
     fun broadcastToAll(peers: List<String>, messageText: String) {
-        peers.forEach { address ->
-            sendMessage(address, messageText, true) { _ -> }
+        // Fix 6: Basic throttling - process sequentially to avoid connection churn
+        if (peers.isEmpty()) return
+        sendToPeer(peers, 0, messageText)
+    }
+
+    private fun sendToPeer(peers: List<String>, index: Int, text: String) {
+        if (index >= peers.size) return
+        sendMessage(peers[index], text, true) {
+            sendToPeer(peers, index + 1, text)
         }
     }
 }
