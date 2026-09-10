@@ -8,6 +8,7 @@ import com.example.resqmesh.data.repository.ChatRepository
 import com.example.resqmesh.domain.models.ChatMessage
 import com.example.resqmesh.security.CryptoHelper
 import com.google.gson.Gson
+import kotlinx.coroutines.*
 import java.util.*
 
 class GattServerManager(private val context: Context) {
@@ -15,11 +16,11 @@ class GattServerManager(private val context: Context) {
     private var gattServer: BluetoothGattServer? = null
     private val cryptoHelper = CryptoHelper()
     private val gson = Gson()
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private val messageBuffer = StringBuilder()
 
     companion object {
-        // NEW: Unique ResQmesh UUIDs (No longer Heart Rate placeholders)
         val SERVICE_UUID: UUID = UUID.fromString("8f83db5d-0043-41c8-89c0-67c9c0b621e2")
         val MESSAGE_CHARACTERISTIC_UUID: UUID = UUID.fromString("3f99f928-8742-45e0-9e6b-a25e24c52084")
     }
@@ -37,7 +38,6 @@ class GattServerManager(private val context: Context) {
         ) {
             super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value)
             
-            // Fix 6: Check for preparedWrite (unsupported in our simple chunking protocol)
             if (preparedWrite) {
                 if (responseNeeded && device != null) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, 0, null)
@@ -48,7 +48,6 @@ class GattServerManager(private val context: Context) {
             if (characteristic?.uuid == MESSAGE_CHARACTERISTIC_UUID && value != null) {
                 val dataStr = String(value, Charsets.UTF_8)
                 
-                // Fix 1: Unified 5-character protocol headers
                 when {
                     dataStr.startsWith("STRT:") -> {
                         messageBuffer.setLength(0)
@@ -77,27 +76,27 @@ class GattServerManager(private val context: Context) {
     }
 
     private fun processFullMessage(jsonPayload: String, deviceAddress: String) {
-        try {
-            val meshMessage = gson.fromJson(jsonPayload, ChatMessage::class.java)
-            if (!ChatRepository.isMessageNew(meshMessage.messageId)) return
+        serviceScope.launch {
+            try {
+                val meshMessage = gson.fromJson(jsonPayload, ChatMessage::class.java)
+                if (!ChatRepository.isMessageNew(meshMessage.messageId)) return@launch
 
-            // Fix 3: EXACT 32-byte key (Removed the 33rd character)
-            val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
-            val decryptedText = cryptoHelper.decrypt(meshMessage.text, dummySecret) ?: "[Encrypted]"
-            
-            // Fix 2: SenderId mapping logic verified
-            val finalPeerId = if (meshMessage.senderId == "02:00:00:00:00:00") deviceAddress else meshMessage.senderId
-            
-            val receivedMessage = meshMessage.copy(
-                senderId = finalPeerId,
-                text = decryptedText,
-                isFromMe = false
-            )
-            
-            ChatRepository.addMessage(receivedMessage)
-            Log.d("GattServer", "Delivered: $decryptedText")
-        } catch (e: Exception) {
-            Log.e("GattServer", "JSON/Crypto Error: ${e.message}")
+                val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
+                val decryptedText = cryptoHelper.decrypt(meshMessage.text, dummySecret) ?: "[Encrypted]"
+                
+                val finalPeerId = if (meshMessage.senderId == "02:00:00:00:00:00") deviceAddress else meshMessage.senderId
+                
+                val receivedMessage = meshMessage.copy(
+                    senderId = finalPeerId,
+                    text = decryptedText,
+                    isFromMe = false
+                )
+                
+                ChatRepository.addMessage(receivedMessage)
+                Log.d("GattServer", "Delivered: $decryptedText")
+            } catch (e: Exception) {
+                Log.e("GattServer", "JSON/Crypto Error: ${e.message}")
+            }
         }
     }
 
