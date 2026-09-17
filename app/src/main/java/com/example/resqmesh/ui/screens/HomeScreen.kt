@@ -101,15 +101,21 @@ fun HomeScreen(
                     isActive = isMeshActive,
                     onToggle = { 
                         val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-                        if (bluetoothManager.adapter?.isEnabled == false) {
+                        val adapter = bluetoothManager.adapter
+                        
+                        if (adapter == null) {
+                            Toast.makeText(context, "Bluetooth not supported on this device", Toast.LENGTH_SHORT).show()
+                        } else if (!adapter.isEnabled) {
                             Toast.makeText(context, "Please turn on Bluetooth first", Toast.LENGTH_SHORT).show()
                         } else {
                             isMeshActive = !isMeshActive
                             if (isMeshActive) {
+                                Toast.makeText(context, "Activating Mesh...", Toast.LENGTH_SHORT).show()
                                 bleScanner.startScan()
                                 bleAdvertiser.startAdvertising("User")
                                 gattServer.startServer()
                             } else {
+                                Toast.makeText(context, "Mesh Deactivated", Toast.LENGTH_SHORT).show()
                                 bleScanner.stopScan()
                                 bleAdvertiser.stopAdvertising()
                                 gattServer.stopServer()
