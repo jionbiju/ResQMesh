@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.navigation.compose.rememberNavController
+import com.example.resqmesh.service.MeshManager
 import com.example.resqmesh.ui.navigation.NavGraph
 import com.example.resqmesh.ui.theme.ResQmeshTheme
 
@@ -28,6 +29,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Initialize Mesh Manager singleton
+        MeshManager.init(this)
+
         // Request permissions on startup for disaster readiness
         requestBlePermissions()
 
