@@ -46,7 +46,10 @@ fun MessageListSection(
             modifier = Modifier.padding(bottom = 16.dp)
         )
         
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             if (isActive && realPeers.isEmpty()) {
                 item {
                     Text("Searching for nearby ResQmesh nodes...", color = Color.Gray, fontSize = 14.sp)
