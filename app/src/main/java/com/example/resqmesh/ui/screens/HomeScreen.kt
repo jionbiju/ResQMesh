@@ -17,9 +17,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.resqmesh.ui.theme.ResQmeshTheme
-import com.example.resqmesh.util.BleAdvertiser
-import com.example.resqmesh.util.BleScanner
-import com.example.resqmesh.service.GattServerManager
+import com.example.resqmesh.service.MeshManager
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,10 +31,13 @@ fun HomeScreen(
     var selectedTab by remember { mutableIntStateOf(if (scanResult != null) 2 else 0) }
     val context = LocalContext.current
     
-    val bleScanner = remember { BleScanner(context) }
-    val bleAdvertiser = remember { BleAdvertiser(context) }
-    val gattServer = remember { GattServerManager(context) }
-    var isMeshActive by remember { mutableStateOf(false) }
+    // Initialize MeshManager with Application Context
+    LaunchedEffect(Unit) {
+        MeshManager.init(context)
+    }
+
+    val isMeshActive by MeshManager.isMeshActive.collectAsState()
+    val bleScanner = MeshManager.getScanner()
 
     Scaffold(
         topBar = {
@@ -96,34 +97,36 @@ fun HomeScreen(
     ) { paddingValues ->
         Column(modifier = Modifier.padding(paddingValues)) {
             when (selectedTab) {
-                0 -> MessageListSection(
-                    bleScanner = bleScanner,
-                    isActive = isMeshActive,
-                    onToggle = { 
-                        val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-                        val adapter = bluetoothManager.adapter
-                        
-                        if (adapter == null) {
-                            Toast.makeText(context, "Bluetooth not supported on this device", Toast.LENGTH_SHORT).show()
-                        } else if (!adapter.isEnabled) {
-                            Toast.makeText(context, "Please turn on Bluetooth first", Toast.LENGTH_SHORT).show()
-                        } else {
-                            isMeshActive = !isMeshActive
-                            if (isMeshActive) {
-                                Toast.makeText(context, "Activating Mesh...", Toast.LENGTH_SHORT).show()
-                                bleScanner.startScan()
-                                bleAdvertiser.startAdvertising("User")
-                                gattServer.startServer()
-                            } else {
-                                Toast.makeText(context, "Mesh Deactivated", Toast.LENGTH_SHORT).show()
-                                bleScanner.stopScan()
-                                bleAdvertiser.stopAdvertising()
-                                gattServer.stopServer()
-                            }
+                0 -> {
+                    if (bleScanner != null) {
+                        MessageListSection(
+                            bleScanner = bleScanner,
+                            isActive = isMeshActive,
+                            onToggle = { 
+                                val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+                                val adapter = bluetoothManager.adapter
+                                
+                                if (adapter == null) {
+                                    Toast.makeText(context, "Bluetooth not supported", Toast.LENGTH_SHORT).show()
+                                } else if (!adapter.isEnabled) {
+                                    Toast.makeText(context, "Please turn on Bluetooth first", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    MeshManager.toggleMesh("User")
+                                    if (MeshManager.isMeshActive.value) {
+                                        Toast.makeText(context, "Activating Mesh...", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, "Mesh Deactivated", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            onPeerClick = onNavigateToChat
+                        )
+                    } else {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                            CircularProgressIndicator()
                         }
-                    },
-                    onPeerClick = onNavigateToChat
-                )
+                    }
+                }
                 1 -> ToolsScreen(onSurvivalGuideClick = onNavigateToSurvivalGuide)
                 2 -> ProfileSettingsSection(
                     onScanClick = onNavigateToQrScanner,
