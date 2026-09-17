@@ -14,11 +14,12 @@ import java.util.*
 class BleAdvertiser(context: Context) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
-    private val advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
+    private val advertiser get() = bluetoothAdapter?.bluetoothLeAdvertiser
 
     companion object {
         // Unique ID for ResQmesh - This ensures we only find our own app nodes
-        val SERVICE_UUID: UUID = UUID.fromString("0000180D-0000-1000-8000-00805f9b34fb")
+        // Changed to a truly unique 128-bit UUID to avoid conflicts with standard services
+        val SERVICE_UUID: UUID = UUID.fromString("8f83db5d-0043-41c8-89c0-67c9c0b621e2")
     }
 
     private val advertiseCallback = object : AdvertiseCallback() {
@@ -33,19 +34,35 @@ class BleAdvertiser(context: Context) {
 
     @SuppressLint("MissingPermission")
     fun startAdvertising(userName: String) {
+        android.util.Log.d("BleAdvertiser", "Starting advertising with name: $userName")
+        val advertiserLocal = advertiser
+        if (advertiserLocal == null) {
+            android.util.Log.e("BleAdvertiser", "BluetoothLeAdvertiser is null. Check BT state.")
+            return
+        }
+
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY) // High power for better range
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setConnectable(true)
-            .setTimeout(0) // Advertise indefinitely
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH) // Maximum range
+            .setTimeout(0)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
             .build()
 
+        // Move Name to Scan Response to ensure the Service UUID always fits in the main packet
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
+            .setIncludeTxPowerLevel(true)
             .addServiceUuid(ParcelUuid(SERVICE_UUID))
             .build()
 
-        advertiser?.startAdvertising(settings, data, advertiseCallback)
+        val scanResponse = AdvertiseData.Builder()
+            .setIncludeDeviceName(true)
+            .build()
+
+        try {
+            advertiserLocal.startAdvertising(settings, data, scanResponse, advertiseCallback)
+        } catch (e: Exception) {
+            android.util.Log.e("BleAdvertiser", "Error starting advertising: ${e.message}")
+        }
     }
 
     @SuppressLint("MissingPermission")
