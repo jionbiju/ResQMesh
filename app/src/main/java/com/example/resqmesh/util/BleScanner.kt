@@ -21,7 +21,7 @@ data class DiscoveredPeer(
 class BleScanner(context: Context) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
-    private val bleScanner = bluetoothAdapter?.bluetoothLeScanner
+    private val bleScanner get() = bluetoothAdapter?.bluetoothLeScanner
 
     private val _foundPeers = MutableStateFlow<List<DiscoveredPeer>>(emptyList())
     val foundPeers = _foundPeers.asStateFlow()
@@ -29,33 +29,66 @@ class BleScanner(context: Context) {
     private val scanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            val device = result.device
-            val peerName = device.name ?: "ResQmesh Node"
-            val newPeer = DiscoveredPeer(device.address, peerName, result.rssi)
+            val scanRecord = result.scanRecord
+            val serviceUuids = scanRecord?.serviceUuids
             
-            val currentList = _foundPeers.value.toMutableList()
-            if (!currentList.any { it.id == newPeer.id }) {
-                currentList.add(newPeer)
-                _foundPeers.value = currentList
+            // Manual filter for our Service UUID
+            if (serviceUuids?.any { it.uuid == BleAdvertiser.SERVICE_UUID } == true) {
+                val device = result.device
+                val peerName = scanRecord.deviceName ?: device.name ?: "ResQmesh Node"
+                val newPeer = DiscoveredPeer(device.address, peerName, result.rssi)
+                
+                val currentList = _foundPeers.value.toMutableList()
+                val existingIndex = currentList.indexOfFirst { it.id == newPeer.id }
+                
+                if (existingIndex == -1) {
+                    currentList.add(newPeer)
+                    _foundPeers.value = currentList
+                    android.util.Log.d("BleScanner", "Found new peer: $peerName (${device.address})")
+                } else {
+                    // Update RSSI and Name if it was unknown
+                    val existingPeer = currentList[existingIndex]
+                    if (existingPeer.name == "ResQmesh Node" && peerName != "ResQmesh Node") {
+                        currentList[existingIndex] = newPeer
+                        _foundPeers.value = currentList
+                    }
+                }
             }
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            super.onScanFailed(errorCode)
+            // Could add error reporting here
         }
     }
 
     @SuppressLint("MissingPermission")
     fun startScan() {
+        android.util.Log.d("BleScanner", "Attempting to start scan...")
+        val scanner = bleScanner
+        if (scanner == null) {
+            android.util.Log.e("BleScanner", "BluetoothLeScanner is null. Is Bluetooth ON?")
+            return
+        }
+
         if (bluetoothAdapter?.isEnabled == true) {
             _foundPeers.value = emptyList()
             
-            // Filter specifically for ResQmesh devices
-            val filter = ScanFilter.Builder()
-                .setServiceUuid(ParcelUuid(BleAdvertiser.SERVICE_UUID))
-                .build()
-            
             val settings = ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
+                .setMatchMode(ScanSettings.MATCH_MODE_AGGRESSIVE)
                 .build()
 
-            bleScanner?.startScan(listOf(filter), settings, scanCallback)
+            try {
+                // Scanning without filter and filtering manually in onScanResult for maximum compatibility
+                scanner.startScan(null, settings, scanCallback)
+                android.util.Log.d("BleScanner", "Scan started successfully (no-filter mode)")
+            } catch (e: Exception) {
+                android.util.Log.e("BleScanner", "Error starting scan: ${e.message}")
+            }
+        } else {
+            android.util.Log.w("BleScanner", "Bluetooth is disabled, cannot start scan")
         }
     }
 
