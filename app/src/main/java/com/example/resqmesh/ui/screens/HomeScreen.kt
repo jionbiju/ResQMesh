@@ -38,6 +38,9 @@ fun HomeScreen(
 
     val isMeshActive by MeshManager.isMeshActive.collectAsState()
     val bleScanner = MeshManager.getScanner()
+    
+    val storage = remember { com.example.resqmesh.util.ResQStorage(context) }
+    val profileName by storage.userName.collectAsState(initial = "User")
 
     Scaffold(
         topBar = {
@@ -111,7 +114,7 @@ fun HomeScreen(
                                 } else if (!adapter.isEnabled) {
                                     Toast.makeText(context, "Please turn on Bluetooth first", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    MeshManager.toggleMesh("User")
+                                    MeshManager.toggleMesh(profileName ?: "User")
                                     if (MeshManager.isMeshActive.value) {
                                         Toast.makeText(context, "Activating Mesh...", Toast.LENGTH_SHORT).show()
                                     } else {
