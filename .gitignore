@@ -19,3 +19,4 @@ local.properties
 .idea/workspace.xml
 .idea/usage.statistics.xml
 .idea/shelf/
+*.txt
