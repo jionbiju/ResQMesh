@@ -35,6 +35,16 @@ class BleAdvertiser(context: Context) {
     @SuppressLint("MissingPermission")
     fun startAdvertising(userName: String) {
         android.util.Log.d("BleAdvertiser", "Starting advertising with name: $userName")
+        
+        // Update the Bluetooth Adapter name so it appears in the scan results of other devices
+        try {
+            if (bluetoothAdapter?.name != userName) {
+                bluetoothAdapter?.name = userName
+            }
+        } catch (e: Exception) {
+            Log.e("BleAdvertiser", "Could not set adapter name: ${e.message}")
+        }
+
         val advertiserLocal = advertiser
         if (advertiserLocal == null) {
             android.util.Log.e("BleAdvertiser", "BluetoothLeAdvertiser is null. Check BT state.")

@@ -38,6 +38,7 @@ object MeshManager {
 
         if (newState) {
             bleScanner?.startScan()
+            // Set the device name in the adapter if possible, or pass it to advertiser
             bleAdvertiser?.startAdvertising(userName)
             gattServer?.startServer()
         } else {
