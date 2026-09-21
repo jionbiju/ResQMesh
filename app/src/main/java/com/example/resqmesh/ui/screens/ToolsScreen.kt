@@ -1,5 +1,7 @@
 package com.example.resqmesh.ui.screens
 
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -9,17 +11,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.nativeCanvas
 import com.example.resqmesh.ui.theme.ResQmeshTheme
 import com.example.resqmesh.util.HardwareManager
 
@@ -27,6 +33,8 @@ import com.example.resqmesh.util.HardwareManager
 fun ToolsScreen(onSurvivalGuideClick: () -> Unit) {
     val context = LocalContext.current
     val hardwareManager = remember { HardwareManager(context) }
+    
+    var showCompass by remember { mutableStateOf(false) }
 
     val tools = listOf(
         ToolItem("Flashlight", Icons.Default.FlashlightOn, Color(0xFFFFD700), "Emergency light"),
@@ -43,33 +51,215 @@ fun ToolsScreen(onSurvivalGuideClick: () -> Unit) {
             .background(MaterialTheme.colorScheme.background)
             .padding(16.dp)
     ) {
-        Text(
-            text = "ESSENTIAL UTILITIES",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            color = MaterialTheme.colorScheme.secondary,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
+        if (showCompass) {
+            CompassView(hardwareManager, onDismiss = { showCompass = false })
+        } else {
+            Text(
+                text = "ESSENTIAL UTILITIES",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                color = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
 
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(2),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            items(tools.size) { index ->
-                val tool = tools[index]
-                ToolCard(
-                    tool = tool,
-                    onClick = {
-                        hardwareManager.vibrate()
-                        when (tool.name) {
-                            "Flashlight" -> hardwareManager.toggleFlashlight()
-                            "Whistle" -> hardwareManager.playWhistle()
-                            "Survival Guide" -> onSurvivalGuideClick()
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(2),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                items(tools.size) { index ->
+                    val tool = tools[index]
+                    ToolCard(
+                        tool = tool,
+                        onClick = {
+                            hardwareManager.vibrate()
+                            when (tool.name) {
+                                "Flashlight" -> hardwareManager.toggleFlashlight()
+                                "Whistle" -> hardwareManager.playWhistle()
+                                "Survival Guide" -> onSurvivalGuideClick()
+                                "Compass" -> showCompass = true
+                            }
                         }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CompassView(hardwareManager: HardwareManager, onDismiss: () -> Unit) {
+    val azimuth by hardwareManager.azimuth.collectAsState()
+    
+    DisposableEffect(Unit) {
+        hardwareManager.startCompass()
+        onDispose { hardwareManager.stopCompass() }
+    }
+
+    val animatedAzimuth by animateFloatAsState(
+        targetValue = -azimuth, 
+        animationSpec = spring(stiffness = Spring.StiffnessLow),
+        label = "compass_rotation"
+    )
+
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        shape = RoundedCornerShape(32.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C1E)), // Dark tactical theme
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(), 
+                horizontalArrangement = Arrangement.SpaceBetween, 
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "DIGITAL COMPASS", 
+                        fontWeight = FontWeight.Bold, 
+                        fontSize = 12.sp, 
+                        color = Color.Gray,
+                        letterSpacing = 1.5.sp
+                    )
+                    Text(
+                        "Level your phone for accuracy", 
+                        fontSize = 10.sp, 
+                        color = Color.DarkGray
+                    )
+                }
+                IconButton(
+                    onClick = onDismiss,
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color.White.copy(alpha = 0.1f))
+                ) { 
+                    Icon(Icons.Default.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp)) 
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(260.dp)) {
+                // Compass Background & Dial
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val center = Offset(size.width / 2, size.height / 2)
+                    val radius = size.width / 2
+                    
+                    // Draw outer subtle ring
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.05f),
+                        radius = radius,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx())
+                    )
+
+                    rotate(animatedAzimuth) {
+                        // Draw degree ticks
+                        for (i in 0 until 360 step 10) {
+                            val angleInRad = Math.toRadians(i.toDouble())
+                            val tickLength = if (i % 30 == 0) 40f else 20f
+                            val strokeWidth = if (i % 30 == 0) 3.dp.toPx() else 1.dp.toPx()
+                            val color = if (i % 30 == 0) Color.White.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.2f)
+                            
+                            val startX = center.x + (radius - 10f) * Math.sin(angleInRad).toFloat()
+                            val startY = center.y - (radius - 10f) * Math.cos(angleInRad).toFloat()
+                            val endX = center.x + (radius - 10f - tickLength) * Math.sin(angleInRad).toFloat()
+                            val endY = center.y - (radius - 10f - tickLength) * Math.cos(angleInRad).toFloat()
+                            
+                            drawLine(color = color, start = Offset(startX, startY), end = Offset(endX, endY), strokeWidth = strokeWidth)
+                        }
+
+                        // Draw Cardinal Points with better styling
+                        val textPaint = android.graphics.Paint().apply {
+                            color = android.graphics.Color.WHITE
+                            textSize = 48f
+                            textAlign = android.graphics.Paint.Align.CENTER
+                            typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        }
+                        
+                        val northPaint = android.graphics.Paint().apply {
+                            color = android.graphics.Color.RED
+                            textSize = 52f
+                            textAlign = android.graphics.Paint.Align.CENTER
+                            typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        }
+
+                        // N (Red for emphasis)
+                        drawContext.canvas.nativeCanvas.drawText("N", center.x, center.y - radius + 85f, northPaint)
+                        // Others
+                        drawContext.canvas.nativeCanvas.drawText("S", center.x, center.y + radius - 55f, textPaint)
+                        drawContext.canvas.nativeCanvas.drawText("E", center.x + radius - 70f, center.y + 18f, textPaint)
+                        drawContext.canvas.nativeCanvas.drawText("W", center.x - radius + 70f, center.y + 18f, textPaint)
                     }
+                }
+                
+                // Central Indicator (Static Needle)
+                Canvas(modifier = Modifier.size(220.dp)) {
+                    // Top Red Needle
+                    val topNeedlePath = Path().apply {
+                        moveTo(size.width / 2, 0f)
+                        lineTo(size.width / 2 - 15f, size.height / 2)
+                        lineTo(size.width / 2 + 15f, size.height / 2)
+                        close()
+                    }
+                    drawPath(topNeedlePath, color = Color(0xFFE53935))
+                    
+                    // Bottom Grey Needle
+                    val bottomNeedlePath = Path().apply {
+                        moveTo(size.width / 2, size.height)
+                        lineTo(size.width / 2 - 15f, size.height / 2)
+                        lineTo(size.width / 2 + 15f, size.height / 2)
+                        close()
+                    }
+                    drawPath(bottomNeedlePath, color = Color(0xFF757575))
+                    
+                    // Center Hub
+                    drawCircle(color = Color.Black, radius = 8f, center = Offset(size.width / 2, size.height / 2))
+                    drawCircle(color = Color.White, radius = 4f, center = Offset(size.width / 2, size.height / 2))
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            // Fixed Degree Text (No longer cut off)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "${azimuth.toInt()}°",
+                    fontSize = 56.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    lineHeight = 56.sp
                 )
+                
+                val direction = when (azimuth) {
+                    in 337.5..360.0, in 0.0..22.5 -> "NORTH"
+                    in 22.5..67.5 -> "NORTH-EAST"
+                    in 67.5..112.5 -> "EAST"
+                    in 112.5..157.5 -> "SOUTH-EAST"
+                    in 157.5..202.5 -> "SOUTH"
+                    in 202.5..247.5 -> "SOUTH-WEST"
+                    in 247.5..292.5 -> "WEST"
+                    in 292.5..337.5 -> "NORTH-WEST"
+                    else -> "---"
+                }
+                
+                Surface(
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = direction,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        letterSpacing = 2.sp
+                    )
+                }
             }
         }
     }
