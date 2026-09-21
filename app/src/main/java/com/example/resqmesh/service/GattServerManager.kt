@@ -7,6 +7,7 @@ import android.util.Log
 import com.example.resqmesh.data.repository.ChatRepository
 import com.example.resqmesh.domain.models.ChatMessage
 import com.example.resqmesh.security.CryptoHelper
+import com.example.resqmesh.util.NotificationHelper
 import com.google.gson.Gson
 import kotlinx.coroutines.*
 import java.util.*
@@ -93,6 +94,15 @@ class GattServerManager(private val context: Context) {
                 )
                 
                 ChatRepository.addMessage(receivedMessage)
+                
+                if (receivedMessage.isEmergency) {
+                    NotificationHelper.showEmergencyNotification(
+                        context,
+                        "Nearby ResQmesh Node",
+                        decryptedText
+                    )
+                }
+
                 Log.d("GattServer", "Delivered: $decryptedText")
             } catch (e: Exception) {
                 Log.e("GattServer", "JSON/Crypto Error: ${e.message}")

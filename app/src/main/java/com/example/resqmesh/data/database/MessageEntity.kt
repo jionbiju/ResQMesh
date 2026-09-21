@@ -12,7 +12,8 @@ data class MessageEntity(
     val text: String,
     val isFromMe: Boolean,
     val timestamp: Long,
-    val ttl: Int
+    val ttl: Int,
+    val isEmergency: Boolean = false
 ) {
     fun toDomainModel() = ChatMessage(
         messageId = messageId,
@@ -21,7 +22,8 @@ data class MessageEntity(
         text = text,
         isFromMe = isFromMe,
         timestamp = timestamp,
-        ttl = ttl
+        ttl = ttl,
+        isEmergency = isEmergency
     )
 
     companion object {
@@ -32,7 +34,8 @@ data class MessageEntity(
             text = model.text,
             isFromMe = model.isFromMe,
             timestamp = model.timestamp,
-            ttl = model.ttl
+            ttl = model.ttl,
+            isEmergency = model.isEmergency
         )
     }
 }

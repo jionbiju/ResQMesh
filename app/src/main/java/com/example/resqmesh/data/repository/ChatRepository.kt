@@ -18,6 +18,9 @@ object ChatRepository {
     private val _allMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
     val allMessages: StateFlow<List<ChatMessage>> = _allMessages.asStateFlow()
 
+    private val _emergencyEvents = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 1)
+    val emergencyEvents = _emergencyEvents.asSharedFlow()
+
     fun init(context: Context) {
         if (database == null) {
             Log.d("ChatRepository", "Initializing Database...")
@@ -52,6 +55,10 @@ object ChatRepository {
             try {
                 db.messageDao().insertMessage(MessageEntity.fromDomainModel(message))
                 Log.d("ChatRepository", "Message saved to DB: ${message.messageId}")
+                
+                if (message.isEmergency && !message.isFromMe) {
+                    _emergencyEvents.emit(message)
+                }
             } catch (e: Exception) {
                 Log.e("ChatRepository", "Error saving message: ${e.message}")
             }

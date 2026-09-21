@@ -1,5 +1,6 @@
 package com.example.resqmesh.ui.screens
 
+import android.widget.Toast
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -13,15 +14,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.resqmesh.service.GattClientManager
+import com.example.resqmesh.service.MeshManager
 import com.example.resqmesh.ui.theme.ResQmeshTheme
+import com.example.resqmesh.util.DiscoveredPeer
+import kotlinx.coroutines.flow.MutableStateFlow
 
 @Composable
 fun SOSScreen(onBackClick: () -> Unit) {
+    val context = LocalContext.current
+    val clientManager = remember { GattClientManager(context) }
+    val scanner = MeshManager.getScanner()
+    val peers by (scanner?.foundPeers ?: MutableStateFlow(emptyList<DiscoveredPeer>())).collectAsState()
+    
+    var isBroadcasting by remember { mutableStateOf(false) }
+
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val scale by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -100,11 +113,28 @@ fun SOSScreen(onBackClick: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Button(
-                onClick = { /* Status: Medical */ },
+                onClick = { 
+                    if (peers.isNotEmpty()) {
+                        isBroadcasting = true
+                        clientManager.broadcastToAll(
+                            peers.map { it.id },
+                            "CRITICAL SOS: Medical Help Needed!",
+                            isEmergency = true
+                        )
+                        Toast.makeText(context, "SOS Broadcast Sent to ${peers.size} nodes", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(context, "No nearby nodes found to receive SOS", Toast.LENGTH_SHORT).show()
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black)
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color.Black),
+                enabled = !isBroadcasting
             ) {
-                Text("I Need Medical Help")
+                if (isBroadcasting) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.Black)
+                } else {
+                    Text("I Need Medical Help")
+                }
             }
             
             OutlinedButton(

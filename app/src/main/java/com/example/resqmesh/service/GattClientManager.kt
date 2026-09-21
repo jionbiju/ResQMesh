@@ -19,14 +19,18 @@ class GattClientManager(private val context: Context) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @SuppressLint("MissingPermission")
-    fun sendMessage(deviceAddress: String, messageText: String, isBroadcast: Boolean = false, onResult: (Boolean) -> Unit) {
+    fun sendMessage(
+        deviceAddress: String, 
+        messageText: String, 
+        isBroadcast: Boolean = false, 
+        isEmergency: Boolean = false,
+        onResult: (Boolean) -> Unit
+    ) {
         val device = bluetoothAdapter?.getRemoteDevice(deviceAddress) ?: return
         
-        // Fix 3: EXACT 32-byte key (Removing the 33rd character)
         val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
         val encryptedText = cryptoHelper.encrypt(messageText, dummySecret)
 
-        // Fix 2: Use the sentinel address the server expects
         val myAddress = "02:00:00:00:00:00"
         
         val meshMessage = ChatMessage(
@@ -34,9 +38,10 @@ class GattClientManager(private val context: Context) {
             senderId = myAddress,
             destinationId = if (isBroadcast) "BROADCAST" else deviceAddress,
             text = encryptedText,
-            isFromMe = false, // Clean local-only field on wire
+            isFromMe = false,
             timestamp = System.currentTimeMillis(),
-            ttl = 3
+            ttl = 3,
+            isEmergency = isEmergency
         )
         
         val jsonPayload = gson.toJson(meshMessage).toByteArray(Charsets.UTF_8)
@@ -105,16 +110,15 @@ class GattClientManager(private val context: Context) {
         }, BluetoothDevice.TRANSPORT_LE)
     }
 
-    fun broadcastToAll(peers: List<String>, messageText: String) {
-        // Fix 6: Basic throttling - process sequentially to avoid connection churn
+    fun broadcastToAll(peers: List<String>, messageText: String, isEmergency: Boolean = false) {
         if (peers.isEmpty()) return
-        sendToPeer(peers, 0, messageText)
+        sendToPeer(peers, 0, messageText, isEmergency)
     }
 
-    private fun sendToPeer(peers: List<String>, index: Int, text: String) {
+    private fun sendToPeer(peers: List<String>, index: Int, text: String, isEmergency: Boolean) {
         if (index >= peers.size) return
-        sendMessage(peers[index], text, true) {
-            sendToPeer(peers, index + 1, text)
+        sendMessage(peers[index], text, true, isEmergency) {
+            sendToPeer(peers, index + 1, text, isEmergency)
         }
     }
 }

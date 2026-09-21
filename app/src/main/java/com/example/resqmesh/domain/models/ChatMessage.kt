@@ -7,7 +7,8 @@ data class ChatMessage(
     val text: String,
     val isFromMe: Boolean,
     val timestamp: Long = System.currentTimeMillis(),
-    var ttl: Int = 3 // Maximum 3 hops
+    var ttl: Int = 3, // Maximum 3 hops
+    val isEmergency: Boolean = false
 ) {
     // For local UI display, we match on peerId
     val peerId: String get() = if (isFromMe) destinationId else senderId
