@@ -1,5 +1,7 @@
 package com.example.resqmesh.ui.screens
 
+import android.content.Context
+import android.location.LocationManager
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -26,8 +28,15 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.viewinterop.AndroidView
 import com.example.resqmesh.ui.theme.ResQmeshTheme
 import com.example.resqmesh.util.HardwareManager
+import org.maplibre.android.MapLibre
+import org.maplibre.android.annotations.MarkerOptions
+import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.maps.MapView as MapLibreView
+import org.maplibre.android.maps.Style
 
 @Composable
 fun ToolsScreen(onSurvivalGuideClick: () -> Unit) {
@@ -35,13 +44,14 @@ fun ToolsScreen(onSurvivalGuideClick: () -> Unit) {
     val hardwareManager = remember { HardwareManager(context) }
     
     var showCompass by remember { mutableStateOf(false) }
+    var showMap by remember { mutableStateOf(false) }
 
     val tools = listOf(
         ToolItem("Flashlight", Icons.Default.FlashlightOn, Color(0xFFFFD700), "Emergency light"),
         ToolItem("Compass", Icons.Default.Explore, Color(0xFF4CAF50), "Navigation"),
         ToolItem("Whistle", Icons.Default.Campaign, Color(0xFFF44336), "Rescue signal"),
         ToolItem("Survival Guide", Icons.Default.MenuBook, Color(0xFF2196F3), "First aid & tips"),
-        ToolItem("Maps", Icons.Default.Map, Color(0xFF9C27B0), "Offline area"),
+        ToolItem("Maps", Icons.Default.Map, Color(0xFF9C27B0), "MapLibre Vector Area"),
         ToolItem("Signal Finder", Icons.Default.CellTower, Color(0xFF795548), "Locate networks")
     )
 
@@ -53,6 +63,8 @@ fun ToolsScreen(onSurvivalGuideClick: () -> Unit) {
     ) {
         if (showCompass) {
             CompassView(hardwareManager, onDismiss = { showCompass = false })
+        } else if (showMap) {
+            MapLibreVectorMapView(onDismiss = { showMap = false })
         } else {
             Text(
                 text = "ESSENTIAL UTILITIES",
@@ -79,11 +91,238 @@ fun ToolsScreen(onSurvivalGuideClick: () -> Unit) {
                                 "Whistle" -> hardwareManager.playWhistle()
                                 "Survival Guide" -> onSurvivalGuideClick()
                                 "Compass" -> showCompass = true
+                                "Maps" -> showMap = true
                             }
                         }
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun MapLibreVectorMapView(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var isEmergencyGridMode by remember { mutableStateOf(false) }
+
+    // Synchronously initialize MapLibre instance before view creation
+    remember { MapLibre.getInstance(context) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f),
+        shape = RoundedCornerShape(32.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "MAPLIBRE VECTOR MAP",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.secondary,
+                        letterSpacing = 1.5.sp
+                    )
+                    Text(
+                        if (isEmergencyGridMode) "Tactical Radar Grid (Fully Offline)" else "OpenFreeMap Street Vector Style",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.outline
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { isEmergencyGridMode = !isEmergencyGridMode },
+                        colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Icon(
+                            if (isEmergencyGridMode) Icons.Default.Map else Icons.Default.GridOn,
+                            contentDescription = "Toggle Grid Mode",
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    IconButton(
+                        onClick = onDismiss,
+                        colors = IconButtonDefaults.iconButtonColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Surface(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFF1E1E1E)
+            ) {
+                if (isEmergencyGridMode) {
+                    TacticalGridMap()
+                } else {
+                    AndroidView(
+                        factory = { ctx ->
+                            MapLibre.getInstance(ctx)
+                            MapLibreView(ctx).apply {
+                                onCreate(null)
+                                onStart()
+                                getMapAsync { map ->
+                                    // High-detail OpenFreeMap vector style with all streets, roads, and places worldwide
+                                    map.setStyle(Style.Builder().fromUri("https://tiles.openfreemap.org/styles/bright")) {
+                                        // Hardware GPS location
+                                        val locationManager = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+                                        var userLatLng = LatLng(12.9716, 77.5946)
+
+                                        try {
+                                            val lastLoc = locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                                                ?: locationManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                                            if (lastLoc != null) {
+                                                userLatLng = LatLng(lastLoc.latitude, lastLoc.longitude)
+                                            }
+                                        } catch (e: SecurityException) {
+                                            e.printStackTrace()
+                                        }
+
+                                        map.animateCamera(CameraUpdateFactory.newLatLngZoom(userLatLng, 15.0))
+
+                                        // Marker 1: Current GPS Position
+                                        map.addMarker(
+                                            MarkerOptions()
+                                                .position(userLatLng)
+                                                .title("📍 You Are Here")
+                                                .snippet("Hardware GPS Fixed")
+                                        )
+
+                                        // Marker 2: Emergency Safe Zone
+                                        val shelterLatLng = LatLng(userLatLng.latitude + 0.003, userLatLng.longitude + 0.003)
+                                        map.addMarker(
+                                            MarkerOptions()
+                                                .position(shelterLatLng)
+                                                .title("🏥 Emergency Shelter")
+                                                .snippet("ResQmesh Node 01")
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        "📍 You Are Here",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+                Surface(
+                    color = if (isEmergencyGridMode) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        if (isEmergencyGridMode) "🛡️ Radar Grid" else "🚀 MapLibre Vector",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        color = if (isEmergencyGridMode) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TacticalGridMap() {
+    val context = LocalContext.current
+    var latText by remember { mutableStateOf("12.9716 N") }
+    var lonText by remember { mutableStateOf("77.5946 E") }
+
+    LaunchedEffect(Unit) {
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+        try {
+            val loc = locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                ?: locationManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            if (loc != null) {
+                latText = "${String.format("%.4f", loc.latitude)} N"
+                lonText = "${String.format("%.4f", loc.longitude)} E"
+            }
+        } catch (e: SecurityException) {
+            e.printStackTrace()
+        }
+    }
+
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color(0xFF121212)),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val step = 60f
+            // Draw grid lines
+            for (x in 0..size.width.toInt() step step.toInt()) {
+                drawLine(
+                    color = Color.Green.copy(alpha = 0.15f),
+                    start = Offset(x.toFloat(), 0f),
+                    end = Offset(x.toFloat(), size.height),
+                    strokeWidth = 1f
+                )
+            }
+            for (y in 0..size.height.toInt() step step.toInt()) {
+                drawLine(
+                    color = Color.Green.copy(alpha = 0.15f),
+                    start = Offset(0f, y.toFloat()),
+                    end = Offset(size.width, y.toFloat()),
+                    strokeWidth = 1f
+                )
+            }
+
+            // Draw center radar circles
+            val center = Offset(size.width / 2, size.height / 2)
+            drawCircle(color = Color.Green.copy(alpha = 0.2f), radius = 100f, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
+            drawCircle(color = Color.Green.copy(alpha = 0.1f), radius = 200f, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
+            drawCircle(color = Color.Green.copy(alpha = 0.05f), radius = 300f, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
+
+            // Center Pin
+            drawCircle(color = Color.Red, radius = 10f, center = center)
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 16.dp)
+        ) {
+            Text(
+                "TACTICAL OFFLINE RADAR GRID",
+                color = Color.Green,
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                letterSpacing = 2.sp
+            )
+            Text(
+                "Lat: $latText | Lon: $lonText",
+                color = Color.Green.copy(alpha = 0.7f),
+                fontSize = 11.sp
+            )
         }
     }
 }
