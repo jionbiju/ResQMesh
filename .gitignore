@@ -13,3 +13,9 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Android Studio
+.idea/deploymentTargetSelector.xml
+.idea/workspace.xml
+.idea/usage.statistics.xml
+.idea/shelf/
