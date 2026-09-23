@@ -23,6 +23,7 @@ import com.example.resqmesh.service.MeshManager
 @Composable
 fun HomeScreen(
     onNavigateToSurvivalGuide: () -> Unit,
+    onNavigateToSignalFinder: (() -> Unit)? = null,
     onNavigateToChat: (String, String) -> Unit,
     onNavigateToSOS: () -> Unit,
     onNavigateToQrScanner: () -> Unit,
@@ -130,7 +131,10 @@ fun HomeScreen(
                         }
                     }
                 }
-                1 -> ToolsScreen(onSurvivalGuideClick = onNavigateToSurvivalGuide)
+                1 -> ToolsScreen(
+                    onSurvivalGuideClick = onNavigateToSurvivalGuide,
+                    onSignalFinderClick = onNavigateToSignalFinder
+                )
                 2 -> ProfileSettingsSection(
                     onScanClick = onNavigateToQrScanner,
                     scanResult = scanResult

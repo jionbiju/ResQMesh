@@ -2,10 +2,13 @@ package com.example.resqmesh.ui.screens
 
 import android.content.Context
 import android.location.LocationManager
+import android.net.wifi.WifiManager
+import android.telephony.TelephonyManager
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.CircleShape
@@ -21,16 +24,18 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.resqmesh.service.MeshManager
 import com.example.resqmesh.ui.theme.ResQmeshTheme
 import com.example.resqmesh.util.HardwareManager
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.maplibre.android.MapLibre
 import org.maplibre.android.annotations.MarkerOptions
 import org.maplibre.android.camera.CameraUpdateFactory
@@ -39,12 +44,16 @@ import org.maplibre.android.maps.MapView as MapLibreView
 import org.maplibre.android.maps.Style
 
 @Composable
-fun ToolsScreen(onSurvivalGuideClick: () -> Unit) {
+fun ToolsScreen(
+    onSurvivalGuideClick: () -> Unit,
+    onSignalFinderClick: (() -> Unit)? = null
+) {
     val context = LocalContext.current
     val hardwareManager = remember { HardwareManager(context) }
     
     var showCompass by remember { mutableStateOf(false) }
     var showMap by remember { mutableStateOf(false) }
+    var showSignalFinder by remember { mutableStateOf(false) }
 
     val tools = listOf(
         ToolItem("Flashlight", Icons.Default.FlashlightOn, Color(0xFFFFD700), "Emergency light"),
@@ -65,6 +74,8 @@ fun ToolsScreen(onSurvivalGuideClick: () -> Unit) {
             CompassView(hardwareManager, onDismiss = { showCompass = false })
         } else if (showMap) {
             MapLibreVectorMapView(onDismiss = { showMap = false })
+        } else if (showSignalFinder) {
+            SignalFinderView(onDismiss = { showSignalFinder = false })
         } else {
             Text(
                 text = "ESSENTIAL UTILITIES",
@@ -92,6 +103,13 @@ fun ToolsScreen(onSurvivalGuideClick: () -> Unit) {
                                 "Survival Guide" -> onSurvivalGuideClick()
                                 "Compass" -> showCompass = true
                                 "Maps" -> showMap = true
+                                "Signal Finder" -> {
+                                    if (onSignalFinderClick != null) {
+                                        onSignalFinderClick()
+                                    } else {
+                                        showSignalFinder = true
+                                    }
+                                }
                             }
                         }
                     )
@@ -499,6 +517,365 @@ fun CompassView(hardwareManager: HardwareManager, onDismiss: () -> Unit) {
                         letterSpacing = 2.sp
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun SignalFinderView(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val hardwareManager = remember { HardwareManager(context) }
+    
+    // Start compass sensors for directional guidance
+    DisposableEffect(Unit) {
+        hardwareManager.startCompass()
+        onDispose { hardwareManager.stopCompass() }
+    }
+
+    val azimuth by hardwareManager.azimuth.collectAsState()
+    val scanner = MeshManager.getScanner()
+    val btPeers by (scanner?.foundPeers ?: MutableStateFlow(emptyList())).collectAsState()
+
+    var wifiCount by remember { mutableIntStateOf(0) }
+    var wifiBestRssi by remember { mutableIntStateOf(-100) }
+    var wifiSsid by remember { mutableStateOf("Scanning...") }
+    var cellOperator by remember { mutableStateOf("Scanning...") }
+    var cellSignalType by remember { mutableStateOf("Checking Network...") }
+    
+    var lastRssi by remember { mutableIntStateOf(-100) }
+    var signalTrend by remember { mutableStateOf("▶ STABLE") }
+
+    // Scan hardware signals periodically
+    LaunchedEffect(Unit) {
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+
+        try {
+            if (wifiManager != null && wifiManager.isWifiEnabled) {
+                @Suppress("DEPRECATION")
+                val results = try { wifiManager.scanResults } catch (e: SecurityException) { null }
+                wifiCount = results?.size ?: 0
+                if (!results.isNullOrEmpty()) {
+                    val best = results.maxByOrNull { it.level }
+                    if (best != null) {
+                        wifiBestRssi = best.level
+                        wifiSsid = if (best.SSID.isNullOrBlank()) "Hidden Network" else best.SSID
+                        
+                        // Calculate Signal Trend Delta
+                        if (wifiBestRssi > lastRssi + 3) {
+                            signalTrend = "▲ SIGNAL GAIN (+${wifiBestRssi - lastRssi} dBm)"
+                        } else if (wifiBestRssi < lastRssi - 3) {
+                            signalTrend = "▼ SIGNAL LOSS (${wifiBestRssi - lastRssi} dBm)"
+                        }
+                        lastRssi = wifiBestRssi
+                    }
+                }
+            }
+
+            if (telephonyManager != null) {
+                cellOperator = telephonyManager.networkOperatorName.ifBlank { "No Active Cell Tower" }
+                val networkType = if (telephonyManager.isNetworkRoaming) "Roaming Network" else "Cellular Service"
+                cellSignalType = "$networkType (${telephonyManager.simState})"
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    // Determine strongest overall RSSI
+    val strongestRssi = maxOf(
+        wifiBestRssi,
+        btPeers.maxOfOrNull { it.rssi } ?: -100
+    )
+
+    // Estimate physical distance using Friis Log-Distance Path Loss model
+    val estDistanceMeters = if (strongestRssi > -100) {
+        val dist = Math.pow(10.0, (-50.0 - strongestRssi) / 20.0)
+        String.format("%.1f", dist.coerceIn(1.0, 150.0))
+    } else {
+        "---"
+    }
+
+    // Directional Recommendation based on compass angle
+    val currentCardinal = when (azimuth) {
+        in 337.5..360.0, in 0.0..22.5 -> "NORTH"
+        in 22.5..67.5 -> "NORTH-EAST"
+        in 67.5..112.5 -> "EAST"
+        in 112.5..157.5 -> "SOUTH-EAST"
+        in 157.5..202.5 -> "SOUTH"
+        in 202.5..247.5 -> "SOUTH-WEST"
+        in 247.5..292.5 -> "WEST"
+        in 292.5..337.5 -> "NORTH-WEST"
+        else -> "N/A"
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f),
+        shape = RoundedCornerShape(32.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C1E)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp)
+        ) {
+            // Header Bar
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        "SPECTRUM VECTOR & SIGNAL HOMING",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = Color.Gray,
+                        letterSpacing = 1.5.sp
+                    )
+                    Text(
+                        "Directional Radio Frequency Guidance",
+                        fontSize = 10.sp,
+                        color = Color.DarkGray
+                    )
+                }
+                IconButton(
+                    onClick = onDismiss,
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color.White.copy(alpha = 0.1f))
+                ) {
+                    Icon(Icons.Default.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Directional Guidance Vector Banner
+            Surface(
+                color = Color(0xFF2C2C2E),
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Explore, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text("SIGNAL VECTOR", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.Gray, letterSpacing = 1.sp)
+                                Text("Facing $currentCardinal (${azimuth.toInt()}°)", fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                            }
+                        }
+
+                        Surface(
+                            color = if (signalTrend.contains("GAIN")) Color(0xFF4CAF50).copy(alpha = 0.2f) else Color.White.copy(alpha = 0.1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                signalTrend,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = if (signalTrend.contains("GAIN")) Color(0xFF81C784) else Color.LightGray,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("ESTIMATED DISTANCE", fontSize = 9.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                            Text("~$estDistanceMeters meters", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("HOMING ADVICE", fontSize = 9.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+                            Text(
+                                if (strongestRssi > -70) "Maintain Position" else "Walk $currentCardinal",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            LazyColumn(
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                // Cellular Section
+                item {
+                    SignalCard(
+                        title = "CELLULAR TOWER COVERAGE",
+                        subtitle = if (cellOperator.isBlank()) "No Active Tower Found" else cellOperator,
+                        detail = cellSignalType,
+                        icon = Icons.Default.CellTower,
+                        color = Color(0xFF4CAF50),
+                        statusText = if (cellOperator == "No Carrier Detected") "No Network" else "Tower Active"
+                    )
+                }
+
+                // Wi-Fi Section
+                item {
+                    val wifiDist = if (wifiBestRssi > -100) "~${String.format("%.1f", Math.pow(10.0, (-50.0 - wifiBestRssi) / 20.0).coerceIn(1.0, 100.0))}m away" else "Out of Range"
+                    SignalCard(
+                        title = "WI-FI ACCESS POINTS ($wifiCount DETECTED)",
+                        subtitle = if (wifiCount > 0) wifiSsid else "No Active Wi-Fi APs",
+                        detail = if (wifiCount > 0) "Signal: $wifiBestRssi dBm | $wifiDist" else "Scan area for routers",
+                        icon = Icons.Default.Wifi,
+                        color = Color(0xFF2196F3),
+                        statusText = if (wifiCount > 0) "$wifiCount APs" else "Scanning"
+                    )
+                }
+
+                // Bluetooth Mesh Peers Section
+                item {
+                    Text(
+                        "BLUETOOTH MESH NODES (${btPeers.size})",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Gray,
+                        letterSpacing = 1.sp,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+                }
+
+                if (btPeers.isEmpty()) {
+                    item {
+                        Surface(
+                            color = Color.White.copy(alpha = 0.05f),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.BluetoothSearching, contentDescription = null, tint = Color.Gray)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text("No ResQmesh Peers Nearby", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Text("Walk towards open area or elevated terrain", color = Color.Gray, fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    items(btPeers.size) { index ->
+                        val peer = btPeers[index]
+                        val peerDist = String.format("%.1f", Math.pow(10.0, (-50.0 - peer.rssi) / 20.0).coerceIn(1.0, 100.0))
+                        val signalQuality = when {
+                            peer.rssi > -60 -> "Strong (~${peerDist}m)"
+                            peer.rssi > -80 -> "Medium (~${peerDist}m)"
+                            else -> "Weak (~${peerDist}m)"
+                        }
+
+                        Surface(
+                            color = Color.White.copy(alpha = 0.08f),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(38.dp)
+                                        .background(Color(0xFF9C27B0).copy(alpha = 0.2f), CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Bluetooth, contentDescription = null, tint = Color(0xFF9C27B0), modifier = Modifier.size(20.dp))
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(peer.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Text("ID: ${peer.id.take(12)}... | RSSI: ${peer.rssi} dBm", color = Color.Gray, fontSize = 11.sp)
+                                }
+                                Surface(
+                                    color = Color(0xFF9C27B0).copy(alpha = 0.2f),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(
+                                        signalQuality,
+                                        color = Color(0xFFCE93D8),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SignalCard(
+    title: String,
+    subtitle: String,
+    detail: String,
+    icon: ImageVector,
+    color: Color,
+    statusText: String
+) {
+    Surface(
+        color = Color.White.copy(alpha = 0.05f),
+        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(color.copy(alpha = 0.15f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(24.dp))
+            }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, color = Color.Gray, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(subtitle, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(detail, color = Color.Gray, fontSize = 11.sp)
+            }
+            Surface(
+                color = color.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    statusText,
+                    color = color,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
             }
         }
     }
