@@ -3,6 +3,7 @@ package com.example.resqmesh.ui.viewmodels
 import android.annotation.SuppressLint
 import android.app.Application
 import android.content.Context
+import android.net.wifi.ScanResult
 import android.net.wifi.WifiManager
 import android.os.Build
 import android.telephony.*

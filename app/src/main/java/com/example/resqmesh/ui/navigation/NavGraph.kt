@@ -23,6 +23,7 @@ sealed class Screen(val route: String, val title: String = "", val icon: ImageVe
     object Home : Screen("home", "Messages", Icons.Default.Chat)
     object Tools : Screen("tools", "Tools", Icons.Default.Build)
     object SurvivalGuide : Screen("survival_guide")
+    object SignalFinder : Screen("signal_finder")
     object SOS : Screen("sos")
     object QrScanner : Screen("qr_scanner")
     object Chat : Screen("chat/{peerId}/{peerName}") {
@@ -76,6 +77,9 @@ fun NavGraph(navController: NavHostController) {
                 onNavigateToSurvivalGuide = {
                     navController.navigate(Screen.SurvivalGuide.route)
                 },
+                onNavigateToSignalFinder = {
+                    navController.navigate(Screen.SignalFinder.route)
+                },
                 onNavigateToChat = { peerId, peerName ->
                     navController.navigate(Screen.Chat.createRoute(peerId, peerName))
                 },
@@ -106,6 +110,11 @@ fun NavGraph(navController: NavHostController) {
         }
         composable(Screen.SurvivalGuide.route) {
             SurvivalGuideScreen(onBackClick = {
+                navController.popBackStack()
+            })
+        }
+        composable(Screen.SignalFinder.route) {
+            SignalFinderScreen(onBackClick = {
                 navController.popBackStack()
             })
         }
