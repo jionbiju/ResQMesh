@@ -115,9 +115,9 @@ fun HomeScreen(
                                 } else if (!adapter.isEnabled) {
                                     Toast.makeText(context, "Please turn on Bluetooth first", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    MeshManager.toggleMesh(profileName ?: "User")
+                                    MeshManager.toggleMesh(context, profileName ?: "User")
                                     if (MeshManager.isMeshActive.value) {
-                                        Toast.makeText(context, "Activating Mesh...", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Activating Foreground Mesh...", Toast.LENGTH_SHORT).show()
                                     } else {
                                         Toast.makeText(context, "Mesh Deactivated", Toast.LENGTH_SHORT).show()
                                     }
