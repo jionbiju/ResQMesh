@@ -121,4 +121,90 @@ class GattClientManager(private val context: Context) {
             sendToPeer(peers, index + 1, text, isEmergency)
         }
     }
+
+    // MULTI-HOP RELAY TRANSMISSION
+    @SuppressLint("MissingPermission")
+    fun relayMeshMessage(
+        deviceAddress: String,
+        relayedMessage: ChatMessage,
+        onResult: (Boolean) -> Unit = {}
+    ) {
+        val device = bluetoothAdapter?.getRemoteDevice(deviceAddress) ?: return
+        val jsonPayload = gson.toJson(relayedMessage).toByteArray(Charsets.UTF_8)
+        
+        val chunkSize = 150 
+        val chunks = jsonPayload.indices.step(chunkSize).map { 
+            jsonPayload.sliceArray(it until (it + chunkSize).coerceAtMost(jsonPayload.size))
+        }
+
+        var currentChunk = 0
+        var isDone = false
+
+        device.connectGatt(context, false, object : BluetoothGattCallback() {
+            override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    gatt?.requestMtu(512)
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    if (!isDone) {
+                        isDone = true
+                        mainHandler.post { onResult(false) }
+                    }
+                    gatt?.close()
+                }
+            }
+
+            override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
+                mainHandler.postDelayed({ gatt?.discoverServices() }, 200)
+            }
+
+            override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
+                sendNext(gatt)
+            }
+
+            private fun sendNext(gatt: BluetoothGatt?) {
+                val service = gatt?.getService(GattServerManager.SERVICE_UUID)
+                val char = service?.getCharacteristic(GattServerManager.MESSAGE_CHARACTERISTIC_UUID)
+                
+                if (char != null && currentChunk < chunks.size) {
+                    val header = when {
+                        chunks.size == 1 -> "SOLO:"
+                        currentChunk == 0 -> "STRT:"
+                        currentChunk == chunks.size - 1 -> "DONE:"
+                        else -> "DATA:"
+                    }
+                    char.value = header.toByteArray(Charsets.UTF_8) + chunks[currentChunk]
+                    gatt.writeCharacteristic(char)
+                }
+            }
+
+            override fun onCharacteristicWrite(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int) {
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    currentChunk++
+                    if (currentChunk < chunks.size) {
+                        sendNext(gatt)
+                    } else {
+                        isDone = true
+                        mainHandler.post { onResult(true) }
+                        gatt?.disconnect()
+                    }
+                } else {
+                    isDone = true
+                    mainHandler.post { onResult(false) }
+                    gatt?.disconnect()
+                }
+            }
+        }, BluetoothDevice.TRANSPORT_LE)
+    }
+
+    fun relayToAllPeers(peers: List<String>, relayedMessage: ChatMessage) {
+        if (peers.isEmpty()) return
+        relayToPeerIndex(peers, 0, relayedMessage)
+    }
+
+    private fun relayToPeerIndex(peers: List<String>, index: Int, relayedMessage: ChatMessage) {
+        if (index >= peers.size) return
+        relayMeshMessage(peers[index], relayedMessage) {
+            relayToPeerIndex(peers, index + 1, relayedMessage)
+        }
+    }
 }

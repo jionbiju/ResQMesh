@@ -103,7 +103,23 @@ class GattServerManager(private val context: Context) {
                     )
                 }
 
-                Log.d("GattServer", "Delivered: $decryptedText")
+                // MULTI-HOP FORWARDING (FORWARD)
+                if (meshMessage.ttl > 1) {
+                    val nextHopTtl = meshMessage.ttl - 1
+                    val relayMessage = meshMessage.copy(ttl = nextHopTtl)
+                    
+                    val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
+                    val targetPeerAddresses = activePeers
+                        .map { it.id }
+                        .filter { it != deviceAddress && it != finalPeerId }
+
+                    if (targetPeerAddresses.isNotEmpty()) {
+                        Log.d("GattServer", "Multi-Hop Relaying (TTL: $nextHopTtl) to ${targetPeerAddresses.size} peers...")
+                        GattClientManager(context).relayToAllPeers(targetPeerAddresses, relayMessage)
+                    }
+                }
+
+                Log.d("GattServer", "Delivered & Multi-Hop Processed: $decryptedText")
             } catch (e: Exception) {
                 Log.e("GattServer", "JSON/Crypto Error: ${e.message}")
             }

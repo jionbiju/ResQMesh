@@ -9,6 +9,8 @@ import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.os.ParcelUuid
+import com.example.resqmesh.data.repository.ChatRepository
+import com.example.resqmesh.service.GattClientManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
@@ -18,7 +20,7 @@ data class DiscoveredPeer(
     val rssi: Int
 )
 
-class BleScanner(context: Context) {
+class BleScanner(private val context: Context) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
     private val bleScanner get() = bluetoothAdapter?.bluetoothLeScanner
@@ -45,6 +47,9 @@ class BleScanner(context: Context) {
                     currentList.add(newPeer)
                     _foundPeers.value = currentList
                     android.util.Log.d("BleScanner", "Found new peer: $peerName (${device.address})")
+
+                    // STORE-AND-FORWARD: Forward pending messages to newly discovered peer
+                    forwardPendingMessagesToPeer(device.address)
                 } else {
                     // Update RSSI and Name if it was unknown
                     val existingPeer = currentList[existingIndex]
@@ -58,7 +63,18 @@ class BleScanner(context: Context) {
 
         override fun onScanFailed(errorCode: Int) {
             super.onScanFailed(errorCode)
-            // Could add error reporting here
+        }
+    }
+
+    private fun forwardPendingMessagesToPeer(peerAddress: String) {
+        val pendingMessages = ChatRepository.getPendingStoreAndForwardMessages()
+        if (pendingMessages.isNotEmpty()) {
+            android.util.Log.d("BleScanner", "Store-and-Forward: Forwarding ${pendingMessages.size} pending messages to $peerAddress")
+            val clientManager = GattClientManager(context)
+            for (msg in pendingMessages) {
+                val forwardMsg = msg.copy(ttl = msg.ttl - 1)
+                clientManager.relayMeshMessage(peerAddress, forwardMsg)
+            }
         }
     }
 

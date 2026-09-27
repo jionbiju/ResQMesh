@@ -70,4 +70,12 @@ object ChatRepository {
             list.map { it.toDomainModel() }
         } ?: flowOf(emptyList())
     }
+
+    fun getPendingStoreAndForwardMessages(): List<ChatMessage> {
+        val now = System.currentTimeMillis()
+        val oneHourAgo = now - (60 * 60 * 1000)
+        return _allMessages.value.filter { msg ->
+            msg.ttl > 1 && msg.timestamp > oneHourAgo
+        }
+    }
 }
