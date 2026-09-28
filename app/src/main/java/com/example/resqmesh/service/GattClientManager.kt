@@ -26,7 +26,16 @@ class GattClientManager(private val context: Context) {
         isEmergency: Boolean = false,
         onResult: (Boolean) -> Unit
     ) {
-        val device = bluetoothAdapter?.getRemoteDevice(deviceAddress) ?: return
+        val device = try {
+            bluetoothAdapter?.getRemoteDevice(deviceAddress)
+        } catch (e: Exception) {
+            Log.e("GattClient", "Invalid device address '$deviceAddress': ${e.message}")
+            onResult(false)
+            return
+        } ?: run {
+            onResult(false)
+            return
+        }
         
         val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
         val encryptedText = cryptoHelper.encrypt(messageText, dummySecret)
@@ -129,7 +138,16 @@ class GattClientManager(private val context: Context) {
         relayedMessage: ChatMessage,
         onResult: (Boolean) -> Unit = {}
     ) {
-        val device = bluetoothAdapter?.getRemoteDevice(deviceAddress) ?: return
+        val device = try {
+            bluetoothAdapter?.getRemoteDevice(deviceAddress)
+        } catch (e: Exception) {
+            Log.e("GattClient", "Invalid relay target address '$deviceAddress': ${e.message}")
+            onResult(false)
+            return
+        } ?: run {
+            onResult(false)
+            return
+        }
         val jsonPayload = gson.toJson(relayedMessage).toByteArray(Charsets.UTF_8)
         
         val chunkSize = 150 
