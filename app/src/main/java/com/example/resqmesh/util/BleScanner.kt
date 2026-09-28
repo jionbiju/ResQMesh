@@ -17,7 +17,9 @@ import kotlinx.coroutines.flow.asStateFlow
 data class DiscoveredPeer(
     val id: String,
     val name: String,
-    val rssi: Int
+    val rssi: Int,
+    val hops: Int = 1,
+    val relayedBy: String? = null
 )
 
 class BleScanner(private val context: Context) {
@@ -27,6 +29,39 @@ class BleScanner(private val context: Context) {
 
     private val _foundPeers = MutableStateFlow<List<DiscoveredPeer>>(emptyList())
     val foundPeers = _foundPeers.asStateFlow()
+
+    fun addRelayedPeer(peerId: String, peerName: String, relayedByAddress: String) {
+        if (peerId.isBlank() || peerId == "02:00:00:00:00:00" || peerId == "ME" || peerId == "BROADCAST" || peerId == relayedByAddress) return
+        val currentList = _foundPeers.value.toMutableList()
+        val existingIndex = currentList.indexOfFirst { it.id == peerId }
+        
+        if (existingIndex == -1) {
+            val relayedPeer = DiscoveredPeer(
+                id = peerId,
+                name = peerName,
+                rssi = -85,
+                hops = 2,
+                relayedBy = relayedByAddress
+            )
+            currentList.add(relayedPeer)
+            _foundPeers.value = currentList
+            android.util.Log.d("BleScanner", "Discovered Relayed Peer (2 Hops): $peerName ($peerId) via $relayedByAddress")
+        }
+    }
+
+    fun updatePeerName(peerId: String, newName: String) {
+        if (newName.isBlank() || newName == "User" || newName == "ResQmesh Node") return
+        val currentList = _foundPeers.value.toMutableList()
+        val existingIndex = currentList.indexOfFirst { it.id == peerId }
+        if (existingIndex != -1) {
+            val existing = currentList[existingIndex]
+            if (existing.name != newName) {
+                currentList[existingIndex] = existing.copy(name = newName)
+                _foundPeers.value = currentList
+                android.util.Log.d("BleScanner", "Updated peer $peerId name to: $newName")
+            }
+        }
+    }
 
     private val scanCallback = object : ScanCallback() {
         @SuppressLint("MissingPermission")
@@ -51,10 +86,17 @@ class BleScanner(private val context: Context) {
                     // STORE-AND-FORWARD: Forward pending messages to newly discovered peer
                     forwardPendingMessagesToPeer(device.address)
                 } else {
-                    // Update RSSI and Name if it was unknown
+                    // Update RSSI and Name if name was generic ("User" or "ResQmesh Node")
                     val existingPeer = currentList[existingIndex]
-                    if (existingPeer.name == "ResQmesh Node" && peerName != "ResQmesh Node") {
-                        currentList[existingIndex] = newPeer
+                    val isGeneric = existingPeer.name == "ResQmesh Node" || existingPeer.name == "User"
+                    val isBetter = peerName != "ResQmesh Node" && peerName != "User" && peerName.isNotBlank()
+
+                    if (isGeneric && isBetter) {
+                        currentList[existingIndex] = existingPeer.copy(name = peerName, rssi = result.rssi)
+                        _foundPeers.value = currentList
+                    } else {
+                        // Always keep RSSI fresh
+                        currentList[existingIndex] = existingPeer.copy(rssi = result.rssi)
                         _foundPeers.value = currentList
                     }
                 }
