@@ -27,6 +27,8 @@ import com.example.resqmesh.ui.theme.ResQmeshTheme
 import java.text.SimpleDateFormat
 import java.util.*
 
+import com.example.resqmesh.service.MeshManager
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
@@ -37,7 +39,13 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
     var isSending by remember { mutableStateOf(false) }
     
     val allMessages by ChatRepository.allMessages.collectAsState()
-    val messages = allMessages.filter { it.peerId == peerId }
+    val messages = allMessages.filter { 
+        if (peerId == "BROADCAST") {
+            it.destinationId == "BROADCAST"
+        } else {
+            it.peerId == peerId && it.destinationId != "BROADCAST"
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -94,24 +102,49 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                             val msgToSend = messageText
                             isSending = true
                             
-                            // PASS RAW TEXT - GattClientManager handles the rest
-                            clientManager.sendMessage(peerId, msgToSend) { success ->
-                                isSending = false
-                                if (success) {
-                                    ChatRepository.addMessage(
-                                        ChatMessage(
-                                            messageId = UUID.randomUUID().toString(),
-                                            senderId = "ME",
-                                            destinationId = peerId,
-                                            text = msgToSend,
-                                            isFromMe = true,
-                                            timestamp = System.currentTimeMillis(),
-                                            ttl = 3
-                                        )
+                            if (peerId == "BROADCAST") {
+                                // PUBLIC BROADCAST CHANNEL
+                                val activePeers = MeshManager.getScanner()?.foundPeers?.value?.map { it.id } ?: emptyList()
+                                clientManager.broadcastToAll(activePeers, msgToSend, isEmergency = false)
+                                
+                                ChatRepository.addMessage(
+                                    ChatMessage(
+                                        messageId = UUID.randomUUID().toString(),
+                                        senderId = "ME",
+                                        destinationId = "BROADCAST",
+                                        text = msgToSend,
+                                        isFromMe = true,
+                                        timestamp = System.currentTimeMillis(),
+                                        ttl = 3
                                     )
-                                    messageText = ""
+                                )
+                                messageText = ""
+                                isSending = false
+                                if (activePeers.isNotEmpty()) {
+                                    Toast.makeText(context, "Broadcasted to ${activePeers.size} nodes", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    Toast.makeText(context, "Delivery failed. Peer offline.", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Saved to Public Channel (Will relay when peers connect)", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                // DIRECT PEER CHAT
+                                clientManager.sendMessage(peerId, msgToSend) { success ->
+                                    isSending = false
+                                    if (success) {
+                                        ChatRepository.addMessage(
+                                            ChatMessage(
+                                                messageId = UUID.randomUUID().toString(),
+                                                senderId = "ME",
+                                                destinationId = peerId,
+                                                text = msgToSend,
+                                                isFromMe = true,
+                                                timestamp = System.currentTimeMillis(),
+                                                ttl = 3
+                                            )
+                                        )
+                                        messageText = ""
+                                    } else {
+                                        Toast.makeText(context, "Delivery failed. Peer offline.", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                             }
                         }
