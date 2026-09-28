@@ -22,6 +22,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.resqmesh.util.BleScanner
 
+import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.Groups
+
 @Composable
 fun MessageListSection(
     bleScanner: BleScanner,
@@ -37,19 +40,76 @@ fun MessageListSection(
             onToggle = onToggle
         )
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
         Text(
-            text = if (isActive) "Discovered Devices" else "Recent Conversations",
-            fontSize = 18.sp,
+            text = if (isActive) "Mesh Network Channels & Nodes" else "Recent Conversations",
+            fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 16.dp)
+            modifier = Modifier.padding(bottom = 12.dp)
         )
         
         LazyColumn(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Permanent Public Emergency Mesh Channel Card
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onPeerClick("BROADCAST", "Public Emergency Channel") },
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.tertiary),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Campaign,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onTertiary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "📢 Public Emergency Channel",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer
+                            )
+                            Text(
+                                text = "Broadcasts to all nodes (1, 2 & 3 Hops away)",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
+                            )
+                        }
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiary,
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = "Public",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onTertiary,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
             if (isActive && realPeers.isEmpty()) {
                 item {
                     Text("Searching for nearby ResQmesh nodes...", color = Color.Gray, fontSize = 14.sp)
@@ -59,7 +119,9 @@ fun MessageListSection(
             items(realPeers) { peer ->
                 PeerItem(
                     name = peer.name,
-                    status = "ID: ${peer.id}",
+                    status = "ID: ${peer.id.take(16)}...",
+                    hops = peer.hops,
+                    relayedBy = peer.relayedBy,
                     isOnline = true,
                     onClick = { onPeerClick(peer.id, peer.name) }
                 )
@@ -106,7 +168,14 @@ fun MeshStatusCard(isActive: Boolean, onToggle: () -> Unit) {
 }
 
 @Composable
-fun PeerItem(name: String, status: String, isOnline: Boolean, onClick: () -> Unit) {
+fun PeerItem(
+    name: String, 
+    status: String, 
+    isOnline: Boolean, 
+    hops: Int = 1,
+    relayedBy: String? = null,
+    onClick: () -> Unit
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -121,12 +190,36 @@ fun PeerItem(name: String, status: String, isOnline: Boolean, onClick: () -> Uni
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(if (isOnline) Color.Green else Color.Gray)
-            )
+                    .background(if (hops > 1) Color(0xFF9C27B0) else if (isOnline) Color(0xFF4CAF50) else Color.Gray),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (hops > 1) "2H" else "1H",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp
+                )
+            }
             Spacer(modifier = Modifier.width(16.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(text = name, fontWeight = FontWeight.Bold)
-                Text(text = status, fontSize = 12.sp, color = Color.Gray)
+                Text(
+                    text = if (hops > 1) "Relayed Node ($status)" else status, 
+                    fontSize = 12.sp, 
+                    color = Color.Gray
+                )
+            }
+            Surface(
+                color = if (hops > 1) Color(0xFF9C27B0).copy(alpha = 0.15f) else Color(0xFF4CAF50).copy(alpha = 0.15f),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    text = if (hops > 1) "🟣 2 Hops" else "🟢 Direct",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (hops > 1) Color(0xFF9C27B0) else Color(0xFF2E7D32),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
             }
         }
     }
