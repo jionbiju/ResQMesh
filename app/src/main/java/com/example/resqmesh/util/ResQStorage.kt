@@ -14,14 +14,23 @@ class ResQStorage(private val context: Context) {
     companion object {
         val USER_NAME = stringPreferencesKey("user_name")
         val USER_ROLE = stringPreferencesKey("user_role")
-        // We'll store trusted keys as: peer_address -> public_key_base64
-        // For simplicity today, we'll store a single current "Partner" key
+        val NODE_ID = stringPreferencesKey("node_id")
         val TRUSTED_PARTNER_KEY = stringPreferencesKey("partner_key")
     }
 
     val userName: Flow<String?> = context.dataStore.data.map { it[USER_NAME] }
     val userRole: Flow<String?> = context.dataStore.data.map { it[USER_ROLE] }
     val partnerKey: Flow<String?> = context.dataStore.data.map { it[TRUSTED_PARTNER_KEY] }
+    val nodeId: Flow<String?> = context.dataStore.data.map { it[NODE_ID] }
+
+    suspend fun getNodeId(): String {
+        val existing = context.dataStore.data.map { it[NODE_ID] }.first()
+        if (!existing.isNullOrBlank()) return existing
+        
+        val newId = "NODE-" + java.util.UUID.randomUUID().toString().take(8).uppercase()
+        context.dataStore.edit { it[NODE_ID] = newId }
+        return newId
+    }
 
     suspend fun saveProfile(name: String, role: String) {
         context.dataStore.edit { prefs ->

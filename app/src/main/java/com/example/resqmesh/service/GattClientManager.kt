@@ -8,7 +8,10 @@ import android.os.Looper
 import android.util.Log
 import com.example.resqmesh.domain.models.ChatMessage
 import com.example.resqmesh.security.CryptoHelper
+import com.example.resqmesh.util.ResQStorage
 import com.google.gson.Gson
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import java.util.*
 
 class GattClientManager(private val context: Context) {
@@ -19,14 +22,11 @@ class GattClientManager(private val context: Context) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @SuppressLint("MissingPermission")
-    fun sendMessage(
-        deviceAddress: String, 
-        messageText: String, 
-        isBroadcast: Boolean = false, 
-        isEmergency: Boolean = false,
-        onResult: (Boolean) -> Unit
+    fun sendChatMessage(
+        deviceAddress: String,
+        chatMessage: ChatMessage,
+        onResult: (Boolean) -> Unit = {}
     ) {
-        // Resolve latest active MAC address from scanner if peer updated MAC due to Android randomization
         val resolvedAddress = if (BluetoothAdapter.checkBluetoothAddress(deviceAddress)) {
             deviceAddress
         } else {
@@ -49,24 +49,21 @@ class GattClientManager(private val context: Context) {
             onResult(false)
             return
         }
-        
-        val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
-        val encryptedText = cryptoHelper.encrypt(messageText, dummySecret)
 
-        val myAddress = "02:00:00:00:00:00"
-        
-        val meshMessage = ChatMessage(
-            messageId = UUID.randomUUID().toString(),
-            senderId = myAddress,
-            destinationId = if (isBroadcast) "BROADCAST" else deviceAddress,
+        val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
+        val encryptedText = cryptoHelper.encrypt(chatMessage.text, dummySecret)
+
+        val storage = ResQStorage(context)
+        val myProfileName = runBlocking { storage.userName.first() } ?: "User"
+
+        // Wire payload transmits actual profile name in senderId for clean identity mapping
+        val wireMessage = chatMessage.copy(
+            senderId = if (chatMessage.senderId == "ME") myProfileName else chatMessage.senderId,
             text = encryptedText,
-            isFromMe = false,
-            timestamp = System.currentTimeMillis(),
-            ttl = 3,
-            isEmergency = isEmergency
+            isFromMe = false
         )
-        
-        val jsonPayload = gson.toJson(meshMessage).toByteArray(Charsets.UTF_8)
+
+        val jsonPayload = gson.toJson(wireMessage).toByteArray(Charsets.UTF_8)
         val chunkSize = 150 
         val chunks = jsonPayload.indices.step(chunkSize).map { 
             jsonPayload.sliceArray(it until (it + chunkSize).coerceAtMost(jsonPayload.size))
@@ -101,7 +98,6 @@ class GattClientManager(private val context: Context) {
                 val char = service?.getCharacteristic(GattServerManager.MESSAGE_CHARACTERISTIC_UUID)
                 
                 if (char != null && currentChunk < chunks.size) {
-                    // Fix 1: Protocol Header Alignment
                     val header = when {
                         chunks.size == 1 -> "SOLO:"
                         currentChunk == 0 -> "STRT:"
@@ -130,6 +126,27 @@ class GattClientManager(private val context: Context) {
                 }
             }
         }, BluetoothDevice.TRANSPORT_LE)
+    }
+
+    @SuppressLint("MissingPermission")
+    fun sendMessage(
+        deviceAddress: String, 
+        messageText: String, 
+        isBroadcast: Boolean = false, 
+        isEmergency: Boolean = false,
+        onResult: (Boolean) -> Unit
+    ) {
+        val msg = ChatMessage(
+            messageId = UUID.randomUUID().toString(),
+            senderId = "ME",
+            destinationId = if (isBroadcast) "BROADCAST" else deviceAddress,
+            text = messageText,
+            isFromMe = true,
+            timestamp = System.currentTimeMillis(),
+            ttl = 3,
+            isEmergency = isEmergency
+        )
+        sendChatMessage(deviceAddress, msg, onResult)
     }
 
     fun broadcastToAll(peers: List<String>, messageText: String, isEmergency: Boolean = false) {

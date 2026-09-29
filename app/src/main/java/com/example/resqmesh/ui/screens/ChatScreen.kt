@@ -44,13 +44,10 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
             msg.destinationId == "BROADCAST"
         } else {
             msg.destinationId != "BROADCAST" && (
-                msg.peerId == peerId || 
-                msg.senderId == peerId || 
-                msg.destinationId == peerId ||
-                (peerName.isNotBlank() && peerName != "User" && (
-                    msg.senderId.contains(peerName, ignoreCase = true) || 
-                    msg.destinationId.contains(peerName, ignoreCase = true)
-                ))
+                // Message sent by ME to this specific peer
+                (msg.isFromMe && (msg.destinationId == peerId || (peerName.isNotBlank() && msg.destinationId.equals(peerName, ignoreCase = true)))) ||
+                // Message received from THIS specific peer intended for ME
+                (!msg.isFromMe && (msg.senderId == peerId || msg.peerId == peerId || (peerName.isNotBlank() && msg.senderId.equals(peerName, ignoreCase = true))))
             )
         }
     }
@@ -134,8 +131,8 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                                     Toast.makeText(context, "Saved to Public Channel (Will relay when peers connect)", Toast.LENGTH_SHORT).show()
                                 }
                             } else {
-                                // DIRECT PEER CHAT: Transmit over BLE GATT
-                                clientManager.sendMessage(peerId, msgToSend) { success ->
+                                // DIRECT PEER CHAT: Transmit over BLE GATT with matching messageId
+                                clientManager.sendChatMessage(peerId, outgoingMessage) { success ->
                                     isSending = false
                                     if (!success) {
                                         Toast.makeText(context, "Peer offline. Message stored for automatic delivery.", Toast.LENGTH_SHORT).show()

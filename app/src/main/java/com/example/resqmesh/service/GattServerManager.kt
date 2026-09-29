@@ -85,26 +85,29 @@ class GattServerManager(private val context: Context) {
                 val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
                 val decryptedText = cryptoHelper.decrypt(meshMessage.text, dummySecret) ?: "[Encrypted]"
                 
-                // Determine actual peer ID: Direct 1-hop messages always come from deviceAddress
-                val finalPeerId = if (meshMessage.ttl == 3 || meshMessage.senderId == "02:00:00:00:00:00") {
-                    deviceAddress
-                } else {
+                // Determine real sender identity (Profile Name / Static ID)
+                val finalSenderId = if (meshMessage.senderId.isNotBlank() && meshMessage.senderId != "02:00:00:00:00:00" && meshMessage.senderId != "ME") {
                     meshMessage.senderId
+                } else {
+                    deviceAddress
                 }
                 
                 val receivedMessage = meshMessage.copy(
-                    senderId = finalPeerId,
+                    senderId = finalSenderId,
                     text = decryptedText,
                     isFromMe = false
                 )
                 
                 ChatRepository.addMessage(receivedMessage)
                 
+                // Update active peer scanner name if sender sent their real profile name
+                MeshManager.getScanner()?.updatePeerName(deviceAddress, finalSenderId)
+                
                 // Only register a 2-hop relayed peer if the packet was ACTUALLY relayed (TTL < 3)
-                if (meshMessage.ttl < 3 && finalPeerId != deviceAddress && finalPeerId != "02:00:00:00:00:00" && finalPeerId != "ME" && finalPeerId != "BROADCAST") {
+                if (meshMessage.ttl < 3 && finalSenderId != deviceAddress && finalSenderId != "02:00:00:00:00:00" && finalSenderId != "ME" && finalSenderId != "BROADCAST") {
                     MeshManager.getScanner()?.addRelayedPeer(
-                        peerId = finalPeerId,
-                        peerName = "ResQmesh Node (${finalPeerId.take(4)})",
+                        peerId = finalSenderId,
+                        peerName = finalSenderId,
                         relayedByAddress = deviceAddress
                     )
                 }
@@ -112,7 +115,7 @@ class GattServerManager(private val context: Context) {
                 if (receivedMessage.isEmergency) {
                     NotificationHelper.showEmergencyNotification(
                         context,
-                        "Nearby ResQmesh Node",
+                        finalSenderId,
                         decryptedText
                     )
                 }
@@ -125,7 +128,7 @@ class GattServerManager(private val context: Context) {
                     val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
                     val targetPeerAddresses = activePeers
                         .map { it.id }
-                        .filter { it != deviceAddress && it != finalPeerId }
+                        .filter { it != deviceAddress && it != finalSenderId }
 
                     if (targetPeerAddresses.isNotEmpty()) {
                         Log.d("GattServer", "Multi-Hop Relaying (TTL: $nextHopTtl) to ${targetPeerAddresses.size} peers...")
