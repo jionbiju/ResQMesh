@@ -76,7 +76,12 @@ class BleScanner(private val context: Context) {
                 val newPeer = DiscoveredPeer(device.address, peerName, result.rssi)
                 
                 val currentList = _foundPeers.value.toMutableList()
-                val existingIndex = currentList.indexOfFirst { it.id == newPeer.id }
+                val hasRealName = peerName.isNotBlank() && peerName != "ResQmesh Node" && peerName != "User"
+                
+                // Deduplicate by MAC ID OR by Person Profile Name (handles Android MAC randomization)
+                val existingIndex = currentList.indexOfFirst { 
+                    it.id == newPeer.id || (hasRealName && it.name.equals(peerName, ignoreCase = true)) 
+                }
                 
                 if (existingIndex == -1) {
                     currentList.add(newPeer)
@@ -86,19 +91,16 @@ class BleScanner(private val context: Context) {
                     // STORE-AND-FORWARD: Forward pending messages to newly discovered peer
                     forwardPendingMessagesToPeer(device.address)
                 } else {
-                    // Update RSSI and Name if name was generic ("User" or "ResQmesh Node")
-                    val existingPeer = currentList[existingIndex]
-                    val isGeneric = existingPeer.name == "ResQmesh Node" || existingPeer.name == "User"
-                    val isBetter = peerName != "ResQmesh Node" && peerName != "User" && peerName.isNotBlank()
-
-                    if (isGeneric && isBetter) {
-                        currentList[existingIndex] = existingPeer.copy(name = peerName, rssi = result.rssi)
-                        _foundPeers.value = currentList
-                    } else {
-                        // Always keep RSSI fresh
-                        currentList[existingIndex] = existingPeer.copy(rssi = result.rssi)
-                        _foundPeers.value = currentList
-                    }
+                    // Update MAC address (if rotated), Name, and RSSI on existing person entry
+                    val existing = currentList[existingIndex]
+                    val updatedName = if (hasRealName) peerName else existing.name
+                    
+                    currentList[existingIndex] = existing.copy(
+                        id = newPeer.id, // Keep active MAC address updated!
+                        name = updatedName,
+                        rssi = result.rssi
+                    )
+                    _foundPeers.value = currentList
                 }
             }
         }
