@@ -26,13 +26,26 @@ class GattClientManager(private val context: Context) {
         isEmergency: Boolean = false,
         onResult: (Boolean) -> Unit
     ) {
+        // Resolve latest active MAC address from scanner if peer updated MAC due to Android randomization
+        val resolvedAddress = if (BluetoothAdapter.checkBluetoothAddress(deviceAddress)) {
+            deviceAddress
+        } else {
+            MeshManager.getScanner()?.foundPeers?.value?.firstOrNull { 
+                it.id == deviceAddress || it.name.equals(deviceAddress, ignoreCase = true) 
+            }?.id ?: deviceAddress
+        }
+
         val device = try {
-            bluetoothAdapter?.getRemoteDevice(deviceAddress)
+            if (BluetoothAdapter.checkBluetoothAddress(resolvedAddress)) {
+                bluetoothAdapter?.getRemoteDevice(resolvedAddress)
+            } else null
         } catch (e: Exception) {
-            Log.e("GattClient", "Invalid device address '$deviceAddress': ${e.message}")
-            onResult(false)
-            return
-        } ?: run {
+            Log.e("GattClient", "Invalid device address '$resolvedAddress': ${e.message}")
+            null
+        }
+
+        if (device == null) {
+            Log.e("GattClient", "Could not resolve remote Bluetooth device for '$deviceAddress'")
             onResult(false)
             return
         }
