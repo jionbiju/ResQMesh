@@ -91,6 +91,28 @@ class GattServerManager(private val context: Context) {
                 } else {
                     deviceAddress
                 }
+
+                // Handle Node Announcement Frames (Discovery Pings)
+                if (meshMessage.destinationId == "ANNOUNCE" || meshMessage.text == "ANNOUNCE") {
+                    MeshManager.getScanner()?.updatePeerName(deviceAddress, finalSenderId)
+                    if (meshMessage.ttl < 2 && finalSenderId != deviceAddress) {
+                        MeshManager.getScanner()?.addRelayedPeer(
+                            peerId = finalSenderId,
+                            peerName = finalSenderId,
+                            relayedByAddress = deviceAddress
+                        )
+                    }
+                    // Relay ANNOUNCE to other peers if TTL > 1
+                    if (meshMessage.ttl > 1) {
+                        val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
+                        val targetPeerAddresses = activePeers.map { it.id }.filter { it != deviceAddress }
+                        if (targetPeerAddresses.isNotEmpty()) {
+                            delay(350)
+                            GattClientManager(context).relayToAllPeers(targetPeerAddresses, meshMessage.copy(ttl = meshMessage.ttl - 1))
+                        }
+                    }
+                    return@launch
+                }
                 
                 val receivedMessage = meshMessage.copy(
                     senderId = finalSenderId,
@@ -131,6 +153,7 @@ class GattServerManager(private val context: Context) {
                         .filter { it != deviceAddress && it != finalSenderId }
 
                     if (targetPeerAddresses.isNotEmpty()) {
+                        delay(350)
                         Log.d("GattServer", "Multi-Hop Relaying (TTL: $nextHopTtl) to ${targetPeerAddresses.size} peers...")
                         GattClientManager(context).relayToAllPeers(targetPeerAddresses, relayMessage)
                     }

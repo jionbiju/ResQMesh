@@ -16,6 +16,9 @@ import com.example.resqmesh.util.BleScanner
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+import com.example.resqmesh.domain.models.ChatMessage
+import kotlinx.coroutines.*
+
 /**
  * Singleton manager to persist Mesh Network state across screens.
  */
@@ -62,6 +65,9 @@ object MeshManager {
  * Persistent Foreground Relay Service ensuring BLE Mesh stays alive in the background.
  */
 class MeshService : Service() {
+
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private var announceJob: Job? = null
 
     companion object {
         private const val CHANNEL_ID = "mesh_relay_channel"
@@ -141,9 +147,35 @@ class MeshService : Service() {
         MeshManager.getAdvertiser()?.startAdvertising(userName)
         MeshManager.getGattServer()?.startServer()
         MeshManager.setMeshActiveState(true)
+
+        // Start Periodic Node Announcement Loop (Discovery Ping for 2H Nodes)
+        announceJob?.cancel()
+        announceJob = serviceScope.launch {
+            while (isActive) {
+                delay(6_000) // Announce every 6 seconds for fast 2H discovery
+                broadcastNodeAnnouncement(userName)
+            }
+        }
+    }
+
+    private fun broadcastNodeAnnouncement(userName: String) {
+        val activePeers = MeshManager.getScanner()?.foundPeers?.value?.map { it.id } ?: emptyList()
+        if (activePeers.isNotEmpty()) {
+            val announceMsg = ChatMessage(
+                messageId = "ANN-" + java.util.UUID.randomUUID().toString().take(8),
+                senderId = userName,
+                destinationId = "ANNOUNCE",
+                text = "ANNOUNCE",
+                isFromMe = false,
+                timestamp = System.currentTimeMillis(),
+                ttl = 2 // 2 Hops so indirect neighbors discover each other!
+            )
+            GattClientManager(applicationContext).relayToAllPeers(activePeers, announceMsg)
+        }
     }
 
     private fun stopForegroundMesh() {
+        announceJob?.cancel()
         MeshManager.getScanner()?.stopScan()
         MeshManager.getAdvertiser()?.stopAdvertising()
         MeshManager.getGattServer()?.stopServer()
@@ -158,6 +190,7 @@ class MeshService : Service() {
     }
 
     override fun onDestroy() {
+        serviceScope.cancel()
         stopForegroundMesh()
         super.onDestroy()
     }

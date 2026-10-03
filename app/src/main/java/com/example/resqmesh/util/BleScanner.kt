@@ -13,6 +13,8 @@ import com.example.resqmesh.data.repository.ChatRepository
 import com.example.resqmesh.service.GattClientManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 data class DiscoveredPeer(
     val id: String,
@@ -32,8 +34,18 @@ class BleScanner(private val context: Context) {
 
     fun addRelayedPeer(peerId: String, peerName: String, relayedByAddress: String) {
         if (peerId.isBlank() || peerId == "02:00:00:00:00:00" || peerId == "ME" || peerId == "BROADCAST" || peerId == relayedByAddress) return
+        
+        // SELF-FILTER: Do NOT add local user to their own peer list!
+        val storage = ResQStorage(context)
+        val myName = runBlocking { storage.userName.first() } ?: ""
+        if (myName.isNotBlank() && (peerId.equals(myName, ignoreCase = true) || peerName.equals(myName, ignoreCase = true))) {
+            return
+        }
+
         val currentList = _foundPeers.value.toMutableList()
-        val existingIndex = currentList.indexOfFirst { it.id == peerId }
+        val existingIndex = currentList.indexOfFirst { 
+            it.id == peerId || it.name.equals(peerName, ignoreCase = true) || it.name.equals(peerId, ignoreCase = true) 
+        }
         
         if (existingIndex == -1) {
             val relayedPeer = DiscoveredPeer(
@@ -46,6 +58,13 @@ class BleScanner(private val context: Context) {
             currentList.add(relayedPeer)
             _foundPeers.value = currentList
             android.util.Log.d("BleScanner", "Discovered Relayed Peer (2 Hops): $peerName ($peerId) via $relayedByAddress")
+        } else {
+            val existing = currentList[existingIndex]
+            // Keep 1-Hop Direct classification if already direct!
+            if (existing.hops > 1) {
+                currentList[existingIndex] = existing.copy(relayedBy = relayedByAddress)
+                _foundPeers.value = currentList
+            }
         }
     }
 
@@ -73,6 +92,14 @@ class BleScanner(private val context: Context) {
             if (serviceUuids?.any { it.uuid == BleAdvertiser.SERVICE_UUID } == true) {
                 val device = result.device
                 val peerName = scanRecord.deviceName ?: device.name ?: "ResQmesh Node"
+                
+                // Do NOT add local user to their own scanner list!
+                val storage = ResQStorage(context)
+                val myName = runBlocking { storage.userName.first() } ?: ""
+                if (myName.isNotBlank() && peerName.equals(myName, ignoreCase = true)) {
+                    return
+                }
+
                 val newPeer = DiscoveredPeer(device.address, peerName, result.rssi)
                 
                 val currentList = _foundPeers.value.toMutableList()
@@ -132,7 +159,8 @@ class BleScanner(private val context: Context) {
         }
 
         if (bluetoothAdapter?.isEnabled == true) {
-            _foundPeers.value = emptyList()
+            // Keep existing 2-hop relayed peers when refreshing 1-hop scan
+            _foundPeers.value = _foundPeers.value.filter { it.hops > 1 }
             
             val settings = ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)

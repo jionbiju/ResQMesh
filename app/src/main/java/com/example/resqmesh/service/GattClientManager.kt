@@ -27,16 +27,33 @@ class GattClientManager(private val context: Context) {
         chatMessage: ChatMessage,
         onResult: (Boolean) -> Unit = {}
     ) {
-        val resolvedAddress = if (BluetoothAdapter.checkBluetoothAddress(deviceAddress)) {
-            deviceAddress
-        } else {
-            MeshManager.getScanner()?.foundPeers?.value?.firstOrNull { 
-                it.id == deviceAddress || it.name.equals(deviceAddress, ignoreCase = true) 
-            }?.id ?: deviceAddress
+        val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
+        val peerMatch = activePeers.firstOrNull { 
+            it.id == deviceAddress || it.name.equals(deviceAddress, ignoreCase = true) 
+        }
+
+        // Multi-Hop Routing: If target is 2 Hops away, connect to relayedBy MAC address!
+        val resolvedAddress: String? = when {
+            peerMatch != null && peerMatch.hops == 1 && BluetoothAdapter.checkBluetoothAddress(peerMatch.id) -> {
+                peerMatch.id
+            }
+            peerMatch != null && peerMatch.hops > 1 && !peerMatch.relayedBy.isNullOrBlank() -> {
+                val relayMac = peerMatch.relayedBy
+                Log.d("GattClient", "Target '$deviceAddress' is ${peerMatch.hops} Hops away via '$relayMac'. Routing through relay MAC!")
+                if (BluetoothAdapter.checkBluetoothAddress(relayMac)) relayMac else {
+                    activePeers.firstOrNull { it.id == relayMac || it.name.equals(relayMac, ignoreCase = true) }?.id
+                }
+            }
+            BluetoothAdapter.checkBluetoothAddress(deviceAddress) -> deviceAddress
+            else -> {
+                val directRelay = activePeers.firstOrNull { it.hops == 1 && BluetoothAdapter.checkBluetoothAddress(it.id) }?.id
+                Log.d("GattClient", "Fallback: Routing via 1H Relay '$directRelay' for target '$deviceAddress'")
+                directRelay
+            }
         }
 
         val device = try {
-            if (BluetoothAdapter.checkBluetoothAddress(resolvedAddress)) {
+            if (!resolvedAddress.isNullOrBlank() && BluetoothAdapter.checkBluetoothAddress(resolvedAddress)) {
                 bluetoothAdapter?.getRemoteDevice(resolvedAddress)
             } else null
         } catch (e: Exception) {
@@ -118,11 +135,13 @@ class GattClientManager(private val context: Context) {
                         isDone = true
                         mainHandler.post { onResult(true) }
                         gatt?.disconnect()
+                        gatt?.close()
                     }
                 } else {
                     isDone = true
                     mainHandler.post { onResult(false) }
                     gatt?.disconnect()
+                    gatt?.close()
                 }
             }
         }, BluetoothDevice.TRANSPORT_LE)
@@ -234,11 +253,13 @@ class GattClientManager(private val context: Context) {
                         isDone = true
                         mainHandler.post { onResult(true) }
                         gatt?.disconnect()
+                        gatt?.close()
                     }
                 } else {
                     isDone = true
                     mainHandler.post { onResult(false) }
                     gatt?.disconnect()
+                    gatt?.close()
                 }
             }
         }, BluetoothDevice.TRANSPORT_LE)
@@ -252,7 +273,9 @@ class GattClientManager(private val context: Context) {
     private fun relayToPeerIndex(peers: List<String>, index: Int, relayedMessage: ChatMessage) {
         if (index >= peers.size) return
         relayMeshMessage(peers[index], relayedMessage) {
-            relayToPeerIndex(peers, index + 1, relayedMessage)
+            mainHandler.postDelayed({
+                relayToPeerIndex(peers, index + 1, relayedMessage)
+            }, 300)
         }
     }
 }
