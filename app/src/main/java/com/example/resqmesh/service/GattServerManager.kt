@@ -118,7 +118,7 @@ class GattServerManager(private val context: Context) {
                         val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
                         val targetPeerAddresses = activePeers.map { it.id }.filter { it != deviceAddress }
                         if (targetPeerAddresses.isNotEmpty()) {
-                            delay(350)
+                            delay(800)
                             GattClientManager(context).relayToAllPeers(targetPeerAddresses, meshMessage.copy(ttl = meshMessage.ttl - 1))
                         }
                     }
@@ -131,8 +131,7 @@ class GattServerManager(private val context: Context) {
 
                 val isIntendedForMe = meshMessage.destinationId == "BROADCAST" ||
                                       meshMessage.destinationId == "ME" ||
-                                      meshMessage.destinationId.equals(myProfileName, ignoreCase = true) ||
-                                      meshMessage.destinationId.equals(deviceAddress, ignoreCase = true)
+                                      meshMessage.destinationId.equals(myProfileName, ignoreCase = true)
                 
                 val receivedMessage = meshMessage.copy(
                     senderId = finalSenderId,
@@ -179,7 +178,7 @@ class GattServerManager(private val context: Context) {
                         .filter { it != deviceAddress && it != finalSenderId }
 
                     if (targetPeerAddresses.isNotEmpty()) {
-                        delay(350)
+                        delay(800)
                         Log.d("GattServer", "Multi-Hop Relaying (TTL: $nextHopTtl) to ${targetPeerAddresses.size} peers...")
                         GattClientManager(context).relayToAllPeers(targetPeerAddresses, relayMessage)
                     }

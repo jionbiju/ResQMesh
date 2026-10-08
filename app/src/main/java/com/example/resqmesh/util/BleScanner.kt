@@ -21,8 +21,11 @@ data class DiscoveredPeer(
     val name: String,
     val rssi: Int,
     val hops: Int = 1,
-    val relayedBy: String? = null
-)
+    val relayedBy: String? = null,
+    val lastSeenTimestamp: Long = System.currentTimeMillis()
+) {
+    val isOnline: Boolean get() = (System.currentTimeMillis() - lastSeenTimestamp) < 60_000
+}
 
 class BleScanner(private val context: Context) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -53,16 +56,22 @@ class BleScanner(private val context: Context) {
                 name = peerName,
                 rssi = -85,
                 hops = 2,
-                relayedBy = relayedByAddress
+                relayedBy = relayedByAddress,
+                lastSeenTimestamp = System.currentTimeMillis()
             )
             currentList.add(relayedPeer)
             _foundPeers.value = currentList
             android.util.Log.d("BleScanner", "Discovered Relayed Peer (2 Hops): $peerName ($peerId) via $relayedByAddress")
         } else {
             val existing = currentList[existingIndex]
-            // Keep 1-Hop Direct classification if already direct!
             if (existing.hops > 1) {
-                currentList[existingIndex] = existing.copy(relayedBy = relayedByAddress)
+                currentList[existingIndex] = existing.copy(
+                    relayedBy = relayedByAddress,
+                    lastSeenTimestamp = System.currentTimeMillis()
+                )
+                _foundPeers.value = currentList
+            } else {
+                currentList[existingIndex] = existing.copy(lastSeenTimestamp = System.currentTimeMillis())
                 _foundPeers.value = currentList
             }
         }
@@ -74,11 +83,12 @@ class BleScanner(private val context: Context) {
         val existingIndex = currentList.indexOfFirst { it.id == peerId }
         if (existingIndex != -1) {
             val existing = currentList[existingIndex]
-            if (existing.name != newName) {
-                currentList[existingIndex] = existing.copy(name = newName)
-                _foundPeers.value = currentList
-                android.util.Log.d("BleScanner", "Updated peer $peerId name to: $newName")
-            }
+            currentList[existingIndex] = existing.copy(
+                name = newName,
+                lastSeenTimestamp = System.currentTimeMillis()
+            )
+            _foundPeers.value = currentList
+            android.util.Log.d("BleScanner", "Updated peer $peerId name to: $newName")
         }
     }
 
@@ -100,7 +110,7 @@ class BleScanner(private val context: Context) {
                     return
                 }
 
-                val newPeer = DiscoveredPeer(device.address, peerName, result.rssi)
+                val newPeer = DiscoveredPeer(device.address, peerName, result.rssi, lastSeenTimestamp = System.currentTimeMillis())
                 
                 val currentList = _foundPeers.value.toMutableList()
                 val hasRealName = peerName.isNotBlank() && peerName != "ResQmesh Node" && peerName != "User"
@@ -118,14 +128,16 @@ class BleScanner(private val context: Context) {
                     // STORE-AND-FORWARD: Forward pending messages to newly discovered peer
                     forwardPendingMessagesToPeer(device.address)
                 } else {
-                    // Update MAC address (if rotated), Name, and RSSI on existing person entry
+                    // Update MAC address (if rotated), Name, RSSI, and lastSeenTimestamp
                     val existing = currentList[existingIndex]
                     val updatedName = if (hasRealName) peerName else existing.name
                     
                     currentList[existingIndex] = existing.copy(
-                        id = newPeer.id, // Keep active MAC address updated!
+                        id = newPeer.id,
                         name = updatedName,
-                        rssi = result.rssi
+                        rssi = result.rssi,
+                        hops = 1,
+                        lastSeenTimestamp = System.currentTimeMillis()
                     )
                     _foundPeers.value = currentList
                 }
@@ -135,6 +147,15 @@ class BleScanner(private val context: Context) {
         override fun onScanFailed(errorCode: Int) {
             super.onScanFailed(errorCode)
         }
+    }
+
+    fun refreshPeers() {
+        android.util.Log.d("BleScanner", "Refreshing active peers...")
+        val now = System.currentTimeMillis()
+        // Prune peers older than 35 seconds
+        _foundPeers.value = _foundPeers.value.filter { (now - it.lastSeenTimestamp) < 35_000 }
+        stopScan()
+        startScan()
     }
 
     private fun forwardPendingMessagesToPeer(peerAddress: String) {

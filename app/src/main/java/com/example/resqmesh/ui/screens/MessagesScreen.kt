@@ -10,6 +10,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothDisabled
+import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,9 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.resqmesh.util.BleScanner
-
-import androidx.compose.material.icons.filled.Campaign
-import androidx.compose.material.icons.filled.Groups
 
 @Composable
 fun MessageListSection(
@@ -42,12 +42,26 @@ fun MessageListSection(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        Text(
-            text = if (isActive) "Mesh Network Channels & Nodes" else "Recent Conversations",
-            fontSize = 16.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 12.dp)
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (isActive) "Mesh Network Channels & Nodes" else "Recent Conversations",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+            if (isActive) {
+                IconButton(onClick = { bleScanner.refreshPeers() }) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh Nodes",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
         
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -122,7 +136,7 @@ fun MessageListSection(
                     status = "ID: ${peer.id.take(16)}...",
                     hops = peer.hops,
                     relayedBy = peer.relayedBy,
-                    isOnline = true,
+                    isOnline = peer.isOnline,
                     onClick = { onPeerClick(peer.id, peer.name) }
                 )
             }
@@ -190,7 +204,13 @@ fun PeerItem(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(if (hops > 1) Color(0xFF9C27B0) else if (isOnline) Color(0xFF4CAF50) else Color.Gray),
+                    .background(
+                        when {
+                            !isOnline -> Color.Gray
+                            hops > 1 -> Color(0xFF9C27B0)
+                            else -> Color(0xFF4CAF50)
+                        }
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -204,20 +224,32 @@ fun PeerItem(
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = name, fontWeight = FontWeight.Bold)
                 Text(
-                    text = if (hops > 1) "Relayed Node ($status)" else status, 
+                    text = if (!isOnline) "Offline Node" else if (hops > 1) "Relayed Node ($status)" else status, 
                     fontSize = 12.sp, 
                     color = Color.Gray
                 )
             }
             Surface(
-                color = if (hops > 1) Color(0xFF9C27B0).copy(alpha = 0.15f) else Color(0xFF4CAF50).copy(alpha = 0.15f),
+                color = when {
+                    !isOnline -> Color.Gray.copy(alpha = 0.15f)
+                    hops > 1 -> Color(0xFF9C27B0).copy(alpha = 0.15f)
+                    else -> Color(0xFF4CAF50).copy(alpha = 0.15f)
+                },
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Text(
-                    text = if (hops > 1) "🟣 2 Hops" else "🟢 Direct",
+                    text = when {
+                        !isOnline -> "🔴 Offline"
+                        hops > 1 -> "🟣 2 Hops"
+                        else -> "🟢 Direct"
+                    },
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
-                    color = if (hops > 1) Color(0xFF9C27B0) else Color(0xFF2E7D32),
+                    color = when {
+                        !isOnline -> Color.Red
+                        hops > 1 -> Color(0xFF9C27B0)
+                        else -> Color(0xFF2E7D32)
+                    },
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }

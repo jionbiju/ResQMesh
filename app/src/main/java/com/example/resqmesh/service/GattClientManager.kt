@@ -25,6 +25,7 @@ class GattClientManager(private val context: Context) {
     fun sendChatMessage(
         deviceAddress: String,
         chatMessage: ChatMessage,
+        attempt: Int = 1,
         onResult: (Boolean) -> Unit = {}
     ) {
         val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
@@ -117,7 +118,14 @@ class GattClientManager(private val context: Context) {
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     if (!isDone) {
                         isDone = true
-                        mainHandler.post { onResult(false) }
+                        if (attempt < 3) {
+                            Log.w("GattClient", "Connection to '$resolvedAddress' failed/disconnected (attempt $attempt/3). Retrying in ${500 * attempt}ms...")
+                            mainHandler.postDelayed({
+                                sendChatMessage(deviceAddress, chatMessage, attempt + 1, onResult)
+                            }, 500L * attempt)
+                        } else {
+                            mainHandler.post { onResult(false) }
+                        }
                     }
                     gatt?.close()
                 }
@@ -184,7 +192,7 @@ class GattClientManager(private val context: Context) {
             ttl = 3,
             isEmergency = isEmergency
         )
-        sendChatMessage(deviceAddress, msg, onResult)
+        sendChatMessage(deviceAddress, msg, 1, onResult)
     }
 
     fun broadcastToAll(peers: List<String>, messageText: String, isEmergency: Boolean = false) {
@@ -204,6 +212,7 @@ class GattClientManager(private val context: Context) {
     fun relayMeshMessage(
         deviceAddress: String,
         relayedMessage: ChatMessage,
+        attempt: Int = 1,
         onResult: (Boolean) -> Unit = {}
     ) {
         val device = try {
@@ -233,7 +242,14 @@ class GattClientManager(private val context: Context) {
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     if (!isDone) {
                         isDone = true
-                        mainHandler.post { onResult(false) }
+                        if (attempt < 3) {
+                            Log.w("GattClient", "Relay connection to '$deviceAddress' disconnected (attempt $attempt/3). Retrying in ${500 * attempt}ms...")
+                            mainHandler.postDelayed({
+                                relayMeshMessage(deviceAddress, relayedMessage, attempt + 1, onResult)
+                            }, 500L * attempt)
+                        } else {
+                            mainHandler.post { onResult(false) }
+                        }
                     }
                     gatt?.close()
                 }
