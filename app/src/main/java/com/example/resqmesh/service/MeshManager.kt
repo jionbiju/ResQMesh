@@ -148,11 +148,12 @@ class MeshService : Service() {
         MeshManager.getGattServer()?.startServer()
         MeshManager.setMeshActiveState(true)
 
-        // Start Periodic Node Announcement Loop (Discovery Ping for 2H Nodes)
+        // Start Periodic Node Announcement Loop (Staggered Jitter Delay prevents GATT collisions)
         announceJob?.cancel()
         announceJob = serviceScope.launch {
             while (isActive) {
-                delay(6_000) // Announce every 6 seconds for fast 2H discovery
+                val jitter = kotlin.random.Random.nextLong(0, 5000)
+                delay(8_000L + jitter)
                 broadcastNodeAnnouncement(userName)
             }
         }

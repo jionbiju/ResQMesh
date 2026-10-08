@@ -24,7 +24,7 @@ data class DiscoveredPeer(
     val relayedBy: String? = null,
     val lastSeenTimestamp: Long = System.currentTimeMillis()
 ) {
-    val isOnline: Boolean get() = (System.currentTimeMillis() - lastSeenTimestamp) < 60_000
+    val isOnline: Boolean get() = (System.currentTimeMillis() - lastSeenTimestamp) < 180_000
 }
 
 class BleScanner(private val context: Context) {
@@ -152,8 +152,8 @@ class BleScanner(private val context: Context) {
     fun refreshPeers() {
         android.util.Log.d("BleScanner", "Refreshing active peers...")
         val now = System.currentTimeMillis()
-        // Prune peers older than 35 seconds
-        _foundPeers.value = _foundPeers.value.filter { (now - it.lastSeenTimestamp) < 35_000 }
+        // Prune peers older than 180 seconds (3 minutes)
+        _foundPeers.value = _foundPeers.value.filter { (now - it.lastSeenTimestamp) < 180_000 }
         stopScan()
         startScan()
     }

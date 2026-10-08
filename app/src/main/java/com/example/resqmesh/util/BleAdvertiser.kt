@@ -36,6 +36,13 @@ class BleAdvertiser(context: Context) {
     fun startAdvertising(userName: String) {
         android.util.Log.d("BleAdvertiser", "Starting advertising with name: $userName")
         
+        // Stop any old advertising session cleanly before starting new one
+        try {
+            stopAdvertising()
+        } catch (e: Exception) {
+            // Ignore
+        }
+
         // Update the Bluetooth Adapter name so it appears in the scan results of other devices
         if (!userName.isNullOrBlank() && userName != "User" && userName != "ResQmesh Node") {
             try {

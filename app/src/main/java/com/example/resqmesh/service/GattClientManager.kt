@@ -21,6 +21,16 @@ class GattClientManager(private val context: Context) {
     private val cryptoHelper = CryptoHelper()
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    private fun refreshGattCache(gatt: BluetoothGatt?): Boolean {
+        return try {
+            val refreshMethod = gatt?.javaClass?.getMethod("refresh")
+            refreshMethod?.invoke(gatt) as? Boolean ?: false
+        } catch (e: Exception) {
+            Log.e("GattClient", "Error refreshing GATT cache: ${e.message}")
+            false
+        }
+    }
+
     @SuppressLint("MissingPermission")
     fun sendChatMessage(
         deviceAddress: String,
@@ -128,6 +138,13 @@ class GattClientManager(private val context: Context) {
                         }
                     }
                     gatt?.close()
+                    // Auto-restart BLE Advertiser so this device remains discoverable for replies!
+                    try {
+                        val myName = runBlocking { storage.userName.first() } ?: "User"
+                        MeshManager.getAdvertiser()?.startAdvertising(myName)
+                    } catch (e: Exception) {
+                        Log.e("GattClient", "Error restarting advertiser: ${e.message}")
+                    }
                 }
             }
 
@@ -136,7 +153,14 @@ class GattClientManager(private val context: Context) {
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-                sendNext(gatt)
+                val service = gatt?.getService(GattServerManager.SERVICE_UUID)
+                if (service == null) {
+                    Log.w("GattClient", "ResQmesh GATT Service null on attempt $attempt. Clearing stale cache...")
+                    refreshGattCache(gatt)
+                    mainHandler.postDelayed({ gatt?.discoverServices() }, 250)
+                } else {
+                    sendNext(gatt)
+                }
             }
 
             private fun sendNext(gatt: BluetoothGatt?) {
@@ -252,6 +276,14 @@ class GattClientManager(private val context: Context) {
                         }
                     }
                     gatt?.close()
+                    // Auto-restart BLE Advertiser so this device remains discoverable for replies!
+                    try {
+                        val storage = ResQStorage(context)
+                        val myName = runBlocking { storage.userName.first() } ?: "User"
+                        MeshManager.getAdvertiser()?.startAdvertising(myName)
+                    } catch (e: Exception) {
+                        Log.e("GattClient", "Error restarting advertiser: ${e.message}")
+                    }
                 }
             }
 
@@ -260,7 +292,14 @@ class GattClientManager(private val context: Context) {
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-                sendNext(gatt)
+                val service = gatt?.getService(GattServerManager.SERVICE_UUID)
+                if (service == null) {
+                    Log.w("GattClient", "ResQmesh GATT Service null on attempt $attempt. Clearing stale cache...")
+                    refreshGattCache(gatt)
+                    mainHandler.postDelayed({ gatt?.discoverServices() }, 250)
+                } else {
+                    sendNext(gatt)
+                }
             }
 
             private fun sendNext(gatt: BluetoothGatt?) {
