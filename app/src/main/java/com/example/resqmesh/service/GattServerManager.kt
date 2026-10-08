@@ -12,6 +12,10 @@ import com.google.gson.Gson
 import kotlinx.coroutines.*
 import java.util.*
 
+import com.example.resqmesh.util.ResQStorage
+import kotlinx.coroutines.flow.first
+import java.util.concurrent.ConcurrentHashMap
+
 class GattServerManager(private val context: Context) {
     private val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private var gattServer: BluetoothGattServer? = null
@@ -19,7 +23,8 @@ class GattServerManager(private val context: Context) {
     private val gson = Gson()
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    private val messageBuffer = StringBuilder()
+    // Thread-safe map for per-device reassembly buffers (Prevents multi-device chunk corruption)
+    private val deviceBuffers = ConcurrentHashMap<String, StringBuilder>()
 
     companion object {
         val SERVICE_UUID: UUID = UUID.fromString("8f83db5d-0043-41c8-89c0-67c9c0b621e2")
@@ -48,24 +53,28 @@ class GattServerManager(private val context: Context) {
 
             if (characteristic?.uuid == MESSAGE_CHARACTERISTIC_UUID && value != null) {
                 val dataStr = String(value, Charsets.UTF_8)
+                val devAddr = device?.address ?: "Unknown"
+                val buffer = deviceBuffers.getOrPut(devAddr) { StringBuilder() }
                 
                 when {
                     dataStr.startsWith("STRT:") -> {
-                        messageBuffer.setLength(0)
-                        messageBuffer.append(dataStr.substring(5))
+                        buffer.setLength(0)
+                        buffer.append(dataStr.substring(5))
                     }
                     dataStr.startsWith("DATA:") -> {
-                        messageBuffer.append(dataStr.substring(5))
+                        buffer.append(dataStr.substring(5))
                     }
                     dataStr.startsWith("DONE:") -> {
-                        messageBuffer.append(dataStr.substring(5))
-                        processFullMessage(messageBuffer.toString(), device?.address ?: "Unknown")
+                        buffer.append(dataStr.substring(5))
+                        val fullMsg = buffer.toString()
+                        buffer.setLength(0)
+                        processFullMessage(fullMsg, devAddr)
                     }
                     dataStr.startsWith("SOLO:") -> {
-                        processFullMessage(dataStr.substring(5), device?.address ?: "Unknown")
+                        processFullMessage(dataStr.substring(5), devAddr)
                     }
                     else -> {
-                        processFullMessage(dataStr, device?.address ?: "Unknown")
+                        processFullMessage(dataStr, devAddr)
                     }
                 }
                 
@@ -94,7 +103,9 @@ class GattServerManager(private val context: Context) {
 
                 // Handle Node Announcement Frames (Discovery Pings)
                 if (meshMessage.destinationId == "ANNOUNCE" || meshMessage.text == "ANNOUNCE") {
-                    MeshManager.getScanner()?.updatePeerName(deviceAddress, finalSenderId)
+                    if (meshMessage.ttl >= 2) {
+                        MeshManager.getScanner()?.updatePeerName(deviceAddress, finalSenderId)
+                    }
                     if (meshMessage.ttl < 2 && finalSenderId != deviceAddress) {
                         MeshManager.getScanner()?.addRelayedPeer(
                             peerId = finalSenderId,
@@ -113,6 +124,15 @@ class GattServerManager(private val context: Context) {
                     }
                     return@launch
                 }
+
+                // Check if this DM is intended for ME or BROADCAST
+                val storage = ResQStorage(context)
+                val myProfileName = runBlocking { storage.userName.first() } ?: "User"
+
+                val isIntendedForMe = meshMessage.destinationId == "BROADCAST" ||
+                                      meshMessage.destinationId == "ME" ||
+                                      meshMessage.destinationId.equals(myProfileName, ignoreCase = true) ||
+                                      meshMessage.destinationId.equals(deviceAddress, ignoreCase = true)
                 
                 val receivedMessage = meshMessage.copy(
                     senderId = finalSenderId,
@@ -120,10 +140,24 @@ class GattServerManager(private val context: Context) {
                     isFromMe = false
                 )
                 
-                ChatRepository.addMessage(receivedMessage)
+                // ONLY save to local inbox if message is intended for ME or BROADCAST
+                if (isIntendedForMe) {
+                    ChatRepository.addMessage(receivedMessage)
+                    if (receivedMessage.isEmergency) {
+                        NotificationHelper.showEmergencyNotification(
+                            context,
+                            finalSenderId,
+                            decryptedText
+                        )
+                    }
+                } else {
+                    Log.d("GattServer", "Relay Node: DM for '${meshMessage.destinationId}' received. Relaying without storing in local inbox.")
+                }
                 
-                // Update active peer scanner name if sender sent their real profile name
-                MeshManager.getScanner()?.updatePeerName(deviceAddress, finalSenderId)
+                // ONLY update direct neighbor's name if this was a DIRECT 1-hop transmission (TTL >= 3)
+                if (meshMessage.ttl >= 3) {
+                    MeshManager.getScanner()?.updatePeerName(deviceAddress, finalSenderId)
+                }
                 
                 // Only register a 2-hop relayed peer if the packet was ACTUALLY relayed (TTL < 3)
                 if (meshMessage.ttl < 3 && finalSenderId != deviceAddress && finalSenderId != "02:00:00:00:00:00" && finalSenderId != "ME" && finalSenderId != "BROADCAST") {
@@ -134,15 +168,7 @@ class GattServerManager(private val context: Context) {
                     )
                 }
 
-                if (receivedMessage.isEmergency) {
-                    NotificationHelper.showEmergencyNotification(
-                        context,
-                        finalSenderId,
-                        decryptedText
-                    )
-                }
-
-                // MULTI-HOP FORWARDING (FORWARD)
+                // MULTI-HOP FORWARDING (FORWARD original encrypted wire payload)
                 if (meshMessage.ttl > 1) {
                     val nextHopTtl = meshMessage.ttl - 1
                     val relayMessage = meshMessage.copy(ttl = nextHopTtl)

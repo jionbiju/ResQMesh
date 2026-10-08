@@ -28,32 +28,53 @@ class GattClientManager(private val context: Context) {
         onResult: (Boolean) -> Unit = {}
     ) {
         val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
-        val peerMatch = activePeers.firstOrNull { 
-            it.id == deviceAddress || it.name.equals(deviceAddress, ignoreCase = true) 
-        }
 
-        // Multi-Hop Routing: If target is 2 Hops away, connect to relayedBy MAC address!
-        val resolvedAddress: String? = when {
-            peerMatch != null && peerMatch.hops == 1 && BluetoothAdapter.checkBluetoothAddress(peerMatch.id) -> {
-                peerMatch.id
+        // RESOLVE ADDRESS: Direct MACs connect directly; 2H targets resolve via 1H Relay MAC
+        val resolvedAddress: String = run {
+            // 1. If deviceAddress is already a valid Bluetooth MAC, connect DIRECTLY to it!
+            if (BluetoothAdapter.checkBluetoothAddress(deviceAddress)) {
+                return@run deviceAddress
             }
-            peerMatch != null && peerMatch.hops > 1 && !peerMatch.relayedBy.isNullOrBlank() -> {
-                val relayMac = peerMatch.relayedBy
-                Log.d("GattClient", "Target '$deviceAddress' is ${peerMatch.hops} Hops away via '$relayMac'. Routing through relay MAC!")
-                if (BluetoothAdapter.checkBluetoothAddress(relayMac)) relayMac else {
-                    activePeers.firstOrNull { it.id == relayMac || it.name.equals(relayMac, ignoreCase = true) }?.id
+
+            // 2. Look up in scanner peers
+            val peerMatch = activePeers.firstOrNull { 
+                it.id == deviceAddress || it.name.equals(deviceAddress, ignoreCase = true) 
+            }
+
+            if (peerMatch != null) {
+                // Direct 1-Hop peer with valid MAC
+                if (peerMatch.hops == 1 && BluetoothAdapter.checkBluetoothAddress(peerMatch.id)) {
+                    return@run peerMatch.id
+                }
+                
+                // Relayed 2-Hop peer: Route through 1H Relay neighbor's MAC
+                if (peerMatch.hops > 1 && !peerMatch.relayedBy.isNullOrBlank()) {
+                    val relayPeer = activePeers.firstOrNull { 
+                        (it.id == peerMatch.relayedBy || it.name.equals(peerMatch.relayedBy, ignoreCase = true)) &&
+                        it.hops == 1 && BluetoothAdapter.checkBluetoothAddress(it.id)
+                    }
+                    if (relayPeer != null) {
+                        Log.d("GattClient", "Target '$deviceAddress' (2H) routed via 1H Relay MAC '${relayPeer.id}'")
+                        return@run relayPeer.id
+                    }
+                    if (BluetoothAdapter.checkBluetoothAddress(peerMatch.relayedBy)) {
+                        return@run peerMatch.relayedBy
+                    }
                 }
             }
-            BluetoothAdapter.checkBluetoothAddress(deviceAddress) -> deviceAddress
-            else -> {
-                val directRelay = activePeers.firstOrNull { it.hops == 1 && BluetoothAdapter.checkBluetoothAddress(it.id) }?.id
-                Log.d("GattClient", "Fallback: Routing via 1H Relay '$directRelay' for target '$deviceAddress'")
-                directRelay
+
+            // 3. Fallback: Find ANY active 1-Hop direct neighbor MAC
+            val direct1Hop = activePeers.firstOrNull { it.hops == 1 && BluetoothAdapter.checkBluetoothAddress(it.id) }?.id
+            if (direct1Hop != null) {
+                Log.d("GattClient", "Fallback: Routing via 1H direct neighbor MAC '$direct1Hop' for target '$deviceAddress'")
+                return@run direct1Hop
             }
+
+            deviceAddress
         }
 
         val device = try {
-            if (!resolvedAddress.isNullOrBlank() && BluetoothAdapter.checkBluetoothAddress(resolvedAddress)) {
+            if (resolvedAddress.isNotBlank() && BluetoothAdapter.checkBluetoothAddress(resolvedAddress)) {
                 bluetoothAdapter?.getRemoteDevice(resolvedAddress)
             } else null
         } catch (e: Exception) {
@@ -135,13 +156,11 @@ class GattClientManager(private val context: Context) {
                         isDone = true
                         mainHandler.post { onResult(true) }
                         gatt?.disconnect()
-                        gatt?.close()
                     }
                 } else {
                     isDone = true
                     mainHandler.post { onResult(false) }
                     gatt?.disconnect()
-                    gatt?.close()
                 }
             }
         }, BluetoothDevice.TRANSPORT_LE)
@@ -253,13 +272,11 @@ class GattClientManager(private val context: Context) {
                         isDone = true
                         mainHandler.post { onResult(true) }
                         gatt?.disconnect()
-                        gatt?.close()
                     }
                 } else {
                     isDone = true
                     mainHandler.post { onResult(false) }
                     gatt?.disconnect()
-                    gatt?.close()
                 }
             }
         }, BluetoothDevice.TRANSPORT_LE)

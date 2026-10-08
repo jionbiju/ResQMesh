@@ -108,11 +108,19 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                             messageText = ""
                             isSending = true
                             
+                            val targetDestination = if (peerId == "BROADCAST") {
+                                "BROADCAST"
+                            } else if (peerName.isNotBlank() && peerName != "User" && peerName != "ResQmesh Node") {
+                                peerName
+                            } else {
+                                peerId
+                            }
+
                             // 1. SAVE LOCALLY IMMEDIATELY so message displays on UI instantly
                             val outgoingMessage = ChatMessage(
                                 messageId = UUID.randomUUID().toString(),
                                 senderId = "ME",
-                                destinationId = peerId,
+                                destinationId = targetDestination,
                                 text = msgToSend,
                                 isFromMe = true,
                                 timestamp = System.currentTimeMillis(),
