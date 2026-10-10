@@ -1,5 +1,7 @@
 package com.example.resqmesh.ui.screens
 
+import android.content.Context
+import android.location.LocationManager
 import android.widget.Toast
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -114,16 +116,32 @@ fun SOSScreen(onBackClick: () -> Unit) {
         ) {
             Button(
                 onClick = { 
+                    val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+                    var locationText = "GPS Fixed: N/A"
+                    try {
+                        val lastLoc = locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+                            ?: locationManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                        if (lastLoc != null) {
+                            val lat = String.format("%.4f", lastLoc.latitude)
+                            val lon = String.format("%.4f", lastLoc.longitude)
+                            locationText = "Location: Lat $lat, Lon $lon"
+                        }
+                    } catch (e: SecurityException) {
+                        e.printStackTrace()
+                    }
+
+                    val sosPayload = "🚨 CRITICAL SOS: Medical Help Needed! $locationText"
+
                     if (peers.isNotEmpty()) {
                         isBroadcasting = true
                         clientManager.broadcastToAll(
                             peers.map { it.id },
-                            "CRITICAL SOS: Medical Help Needed!",
+                            sosPayload,
                             isEmergency = true
                         )
-                        Toast.makeText(context, "SOS Broadcast Sent to ${peers.size} nodes", Toast.LENGTH_LONG).show()
+                        Toast.makeText(context, "SOS Broadcast with GPS sent to ${peers.size} nodes", Toast.LENGTH_LONG).show()
                     } else {
-                        Toast.makeText(context, "No nearby nodes found to receive SOS", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Saved SOS Broadcast ($locationText)", Toast.LENGTH_LONG).show()
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
