@@ -29,6 +29,9 @@ import java.util.*
 
 import com.example.resqmesh.service.MeshManager
 
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteSweep
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
@@ -37,6 +40,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
     
     var messageText by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
+    var showClearDialog by remember { mutableStateOf(false) }
     
     val allMessages by ChatRepository.allMessages.collectAsState()
     val messages = allMessages.filter { msg ->
@@ -50,6 +54,30 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                 (!msg.isFromMe && (msg.senderId == peerId || msg.peerId == peerId || (peerName.isNotBlank() && msg.senderId.equals(peerName, ignoreCase = true))))
             )
         }
+    }
+
+    if (showClearDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearDialog = false },
+            title = { Text("Clear Chat History", fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to clear all messages with $peerName?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        ChatRepository.clearChatWithPeer(peerId)
+                        showClearDialog = false
+                        Toast.makeText(context, "Chat history cleared", Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text("Clear", color = Color.Red, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -86,6 +114,15 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showClearDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteSweep,
+                            contentDescription = "Clear Chat",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -181,6 +218,19 @@ fun ChatBubble(message: ChatMessage) {
 
     val timeString = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(message.timestamp))
 
+    val safeDisplayText = remember(message.text) {
+        try {
+            if (message.text.startsWith("FILE_PAYLOAD") || message.text.startsWith("FILE_CHUNK")) {
+                val filename = message.text.substringAfter('|').substringBefore('|').ifBlank { "Attachment" }
+                "📄 File: $filename"
+            } else {
+                message.text
+            }
+        } catch (e: Exception) {
+            "📄 File Attachment"
+        }
+    }
+
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = alignment) {
         Column(horizontalAlignment = if (message.isFromMe) Alignment.End else Alignment.Start) {
             Surface(
@@ -189,7 +239,7 @@ fun ChatBubble(message: ChatMessage) {
                 shadowElevation = 1.dp
             ) {
                 Text(
-                    text = message.text,
+                    text = safeDisplayText,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                     color = textColor,
                     fontSize = 15.sp,

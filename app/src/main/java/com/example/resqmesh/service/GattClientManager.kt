@@ -21,6 +21,10 @@ class GattClientManager(private val context: Context) {
     private val cryptoHelper = CryptoHelper()
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    companion object {
+        private const val HEADER_SIZE = 5 // "SOLO:", "STRT:", "DATA:", "DONE:"
+    }
+
     private fun refreshGattCache(gatt: BluetoothGatt?): Boolean {
         return try {
             val refreshMethod = gatt?.javaClass?.getMethod("refresh")
@@ -113,11 +117,13 @@ class GattClientManager(private val context: Context) {
         )
 
         val jsonPayload = gson.toJson(wireMessage).toByteArray(Charsets.UTF_8)
-        var negotiatedChunkSize = 20 // Universal safe chunk size for Xiaomi / MIUI default 23 MTU
-        var currentOffset = 0
-        var isDone = false
 
         device.connectGatt(context, false, object : BluetoothGattCallback() {
+            private var negotiatedChunkSize = 15 // 20 byte default MTU payload limit - 5 byte header
+            private var currentOffset = 0
+            private var isDone = false
+            private var discoverTries = 0
+
             override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     mainHandler.postDelayed({
@@ -130,33 +136,34 @@ class GattClientManager(private val context: Context) {
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     if (!isDone) {
                         isDone = true
-                        if (attempt < 3) {
-                            Log.w("GattClient", "Connection to '$resolvedAddress' failed/disconnected (attempt $attempt/3). Retrying in ${500 * attempt}ms...")
+                        if (attempt < 4) {
+                            Log.w("GattClient", "Connection to '$resolvedAddress' failed/disconnected (attempt $attempt/4). Retrying in ${800 * attempt}ms...")
                             mainHandler.postDelayed({
                                 sendChatMessage(deviceAddress, chatMessage, attempt + 1, onResult)
-                            }, 500L * attempt)
+                            }, 800L * attempt)
                         } else {
                             mainHandler.post { onResult(false) }
                         }
                     }
                     gatt?.close()
-                    // Auto-restart BLE Advertiser so this device remains discoverable for replies!
+                    // Auto-restart BLE Advertiser & Scanner so radio resumes clean state
                     try {
-                        val myName = runBlocking { storage.userName.first() } ?: "User"
+                        val myName = MeshManager.activeUserName
                         MeshManager.getAdvertiser()?.startAdvertising(myName)
+                        MeshManager.getScanner()?.startScan()
                     } catch (e: Exception) {
-                        Log.e("GattClient", "Error restarting advertiser: ${e.message}")
+                        Log.e("GattClient", "Error restarting advertiser/scanner: ${e.message}")
                     }
                 }
             }
 
             override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
                 if (status == BluetoothGatt.GATT_SUCCESS && mtu > 23) {
-                    negotiatedChunkSize = (mtu - 10).coerceAtMost(480)
-                    Log.d("GattClient", "Negotiated MTU $mtu. Chunk size set to $negotiatedChunkSize")
+                    negotiatedChunkSize = (mtu - 3 - HEADER_SIZE).coerceAtMost(480)
+                    Log.d("GattClient", "Negotiated MTU $mtu. Chunk payload size set to $negotiatedChunkSize")
                 } else {
-                    negotiatedChunkSize = 18 // Safe default for Xiaomi / MIUI
-                    Log.w("GattClient", "MTU negotiation default. Using safe chunk size $negotiatedChunkSize")
+                    negotiatedChunkSize = 15 // 20 byte limit - 5 byte header
+                    Log.w("GattClient", "MTU negotiation default. Using safe chunk payload size $negotiatedChunkSize")
                 }
                 mainHandler.postDelayed({ gatt?.discoverServices() }, 200)
             }
@@ -164,6 +171,11 @@ class GattClientManager(private val context: Context) {
             override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
                 val service = gatt?.getService(GattServerManager.SERVICE_UUID)
                 if (service == null) {
+                    if (++discoverTries > 2) {
+                        Log.e("GattClient", "ResQmesh service null after 2 discovery tries. Disconnecting...")
+                        gatt?.disconnect()
+                        return
+                    }
                     Log.w("GattClient", "ResQmesh GATT Service null on attempt $attempt. Clearing stale cache...")
                     refreshGattCache(gatt)
                     mainHandler.postDelayed({ gatt?.discoverServices() }, 250)
@@ -203,7 +215,8 @@ class GattClientManager(private val context: Context) {
 
             override fun onCharacteristicWrite(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    currentOffset += negotiatedChunkSize
+                    val bytesWritten = (currentOffset + negotiatedChunkSize).coerceAtMost(jsonPayload.size) - currentOffset
+                    currentOffset += if (bytesWritten > 0) bytesWritten else negotiatedChunkSize
                     if (currentOffset < jsonPayload.size) {
                         sendNextChunk(gatt)
                     } else {
@@ -273,11 +286,12 @@ class GattClientManager(private val context: Context) {
             return
         }
         val jsonPayload = gson.toJson(relayedMessage).toByteArray(Charsets.UTF_8)
-        var negotiatedChunkSize = 20
-        var currentOffset = 0
-        var isDone = false
 
         device.connectGatt(context, false, object : BluetoothGattCallback() {
+            private var negotiatedChunkSize = 20
+            private var currentOffset = 0
+            private var isDone = false
+
             override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     mainHandler.postDelayed({
@@ -360,7 +374,8 @@ class GattClientManager(private val context: Context) {
 
             override fun onCharacteristicWrite(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    currentOffset += negotiatedChunkSize
+                    val bytesWritten = (currentOffset + negotiatedChunkSize).coerceAtMost(jsonPayload.size) - currentOffset
+                    currentOffset += if (bytesWritten > 0) bytesWritten else negotiatedChunkSize
                     if (currentOffset < jsonPayload.size) {
                         sendNextChunk(gatt)
                     } else {

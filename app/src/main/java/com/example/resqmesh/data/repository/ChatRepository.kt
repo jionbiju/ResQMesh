@@ -78,4 +78,36 @@ object ChatRepository {
             msg.ttl > 1 && msg.timestamp > oneHourAgo
         }
     }
+
+    fun clearChatWithPeer(peerId: String) {
+        val db = database
+        repositoryScope.launch {
+            try {
+                if (db != null) {
+                    db.messageDao().deleteMessagesWithPeer(peerId)
+                }
+                _allMessages.value = _allMessages.value.filter { 
+                    it.senderId != peerId && it.destinationId != peerId && (it.destinationId != "BROADCAST" || peerId != "BROADCAST") 
+                }
+                Log.d("ChatRepository", "Cleared chat history for $peerId")
+            } catch (e: Exception) {
+                Log.e("ChatRepository", "Error clearing chat with $peerId: ${e.message}")
+            }
+        }
+    }
+
+    fun clearAllMessages() {
+        val db = database
+        repositoryScope.launch {
+            try {
+                if (db != null) {
+                    db.messageDao().deleteAllMessages()
+                }
+                _allMessages.value = emptyList()
+                Log.d("ChatRepository", "Cleared ALL chat history from DB")
+            } catch (e: Exception) {
+                Log.e("ChatRepository", "Error clearing all messages: ${e.message}")
+            }
+        }
+    }
 }

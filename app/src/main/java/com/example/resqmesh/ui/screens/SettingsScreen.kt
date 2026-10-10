@@ -34,6 +34,7 @@ fun ProfileSettingsSection(
     val scope = rememberCoroutineScope()
     
     var showQrDialog by remember { mutableStateOf(false) }
+    var showClearAllDialog by remember { mutableStateOf(false) }
 
     // Show feedback if a scan just happened
     LaunchedEffect(scanResult) {
@@ -85,6 +86,16 @@ fun ProfileSettingsSection(
             Text("Scan Peer QR Code")
         }
 
+        Spacer(modifier = Modifier.height(12.dp))
+
+        OutlinedButton(
+            onClick = { showClearAllDialog = true },
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+        ) {
+            Text("Clear All Chat History")
+        }
+
         Spacer(modifier = Modifier.weight(1f))
 
         Button(
@@ -94,6 +105,30 @@ fun ProfileSettingsSection(
         ) {
             Text("Reset Profile (Dev Only)")
         }
+    }
+
+    if (showClearAllDialog) {
+        AlertDialog(
+            onDismissRequest = { showClearAllDialog = false },
+            title = { Text("Clear All Chat History", fontWeight = FontWeight.Bold) },
+            text = { Text("Are you sure you want to permanently delete all messages and chat logs from this device?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        com.example.resqmesh.data.repository.ChatRepository.clearAllMessages()
+                        showClearAllDialog = false
+                        Toast.makeText(context, "All chat history cleared", Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text("Clear All", color = Color.Red, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearAllDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 
     if (showQrDialog) {

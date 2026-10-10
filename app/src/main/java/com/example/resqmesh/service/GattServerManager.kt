@@ -193,6 +193,11 @@ class GattServerManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun startServer() {
+        try {
+            gattServer?.close()
+        } catch (e: Exception) {
+            // Ignore
+        }
         gattServer = bluetoothManager.openGattServer(context, gattServerCallback)
         val service = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
         val messageChar = BluetoothGattCharacteristic(

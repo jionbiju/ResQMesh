@@ -19,4 +19,10 @@ interface MessageDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE messageId = :id)")
     suspend fun hasMessage(id: String): Boolean
+
+    @Query("DELETE FROM messages WHERE senderId = :peerId OR destinationId = :peerId OR (destinationId = 'BROADCAST' AND :peerId = 'BROADCAST')")
+    suspend fun deleteMessagesWithPeer(peerId: String)
+
+    @Query("DELETE FROM messages")
+    suspend fun deleteAllMessages()
 }

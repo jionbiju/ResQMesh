@@ -27,6 +27,8 @@ object MeshManager {
     private var bleAdvertiser: BleAdvertiser? = null
     private var gattServer: GattServerManager? = null
 
+    var activeUserName: String = "User"
+
     private val _isMeshActive = MutableStateFlow(false)
     val isMeshActive = _isMeshActive.asStateFlow()
 
@@ -50,6 +52,7 @@ object MeshManager {
     }
 
     fun toggleMesh(context: Context, userName: String) {
+        activeUserName = userName
         val newState = !_isMeshActive.value
         _isMeshActive.value = newState
 
@@ -142,6 +145,7 @@ class MeshService : Service() {
         }
 
         // Initialize and start BLE Mesh hardware engines
+        MeshManager.activeUserName = userName
         MeshManager.init(applicationContext)
         MeshManager.getScanner()?.startScan()
         MeshManager.getAdvertiser()?.startAdvertising(userName)
