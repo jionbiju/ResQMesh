@@ -146,13 +146,12 @@ class GattClientManager(private val context: Context) {
                         }
                     }
                     gatt?.close()
-                    // Auto-restart BLE Advertiser & Scanner so radio resumes clean state
+                    // Auto-restart BLE Advertiser so this device remains discoverable for replies!
                     try {
                         val myName = MeshManager.activeUserName
                         MeshManager.getAdvertiser()?.startAdvertising(myName)
-                        MeshManager.getScanner()?.startScan()
                     } catch (e: Exception) {
-                        Log.e("GattClient", "Error restarting advertiser/scanner: ${e.message}")
+                        Log.e("GattClient", "Error restarting advertiser: ${e.message}")
                     }
                 }
             }
