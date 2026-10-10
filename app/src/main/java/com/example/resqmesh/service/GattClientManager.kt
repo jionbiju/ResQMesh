@@ -113,18 +113,20 @@ class GattClientManager(private val context: Context) {
         )
 
         val jsonPayload = gson.toJson(wireMessage).toByteArray(Charsets.UTF_8)
-        val chunkSize = 150 
-        val chunks = jsonPayload.indices.step(chunkSize).map { 
-            jsonPayload.sliceArray(it until (it + chunkSize).coerceAtMost(jsonPayload.size))
-        }
-
-        var currentChunk = 0
+        var negotiatedChunkSize = 20 // Universal safe chunk size for Xiaomi / MIUI default 23 MTU
+        var currentOffset = 0
         var isDone = false
 
         device.connectGatt(context, false, object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    gatt?.requestMtu(512)
+                    mainHandler.postDelayed({
+                        val mtuOk = gatt?.requestMtu(512) ?: false
+                        if (!mtuOk) {
+                            Log.w("GattClient", "Xiaomi/MIUI MTU request skipped. Discovering services directly...")
+                            gatt?.discoverServices()
+                        }
+                    }, 150)
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     if (!isDone) {
                         isDone = true
@@ -149,6 +151,13 @@ class GattClientManager(private val context: Context) {
             }
 
             override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
+                if (status == BluetoothGatt.GATT_SUCCESS && mtu > 23) {
+                    negotiatedChunkSize = (mtu - 10).coerceAtMost(480)
+                    Log.d("GattClient", "Negotiated MTU $mtu. Chunk size set to $negotiatedChunkSize")
+                } else {
+                    negotiatedChunkSize = 18 // Safe default for Xiaomi / MIUI
+                    Log.w("GattClient", "MTU negotiation default. Using safe chunk size $negotiatedChunkSize")
+                }
                 mainHandler.postDelayed({ gatt?.discoverServices() }, 200)
             }
 
@@ -159,37 +168,51 @@ class GattClientManager(private val context: Context) {
                     refreshGattCache(gatt)
                     mainHandler.postDelayed({ gatt?.discoverServices() }, 250)
                 } else {
-                    sendNext(gatt)
+                    currentOffset = 0
+                    sendNextChunk(gatt)
                 }
             }
 
-            private fun sendNext(gatt: BluetoothGatt?) {
+            private fun sendNextChunk(gatt: BluetoothGatt?) {
                 val service = gatt?.getService(GattServerManager.SERVICE_UUID)
                 val char = service?.getCharacteristic(GattServerManager.MESSAGE_CHARACTERISTIC_UUID)
                 
-                if (char != null && currentChunk < chunks.size) {
+                if (char != null && currentOffset < jsonPayload.size) {
+                    val endIdx = (currentOffset + negotiatedChunkSize).coerceAtMost(jsonPayload.size)
+                    val chunkData = jsonPayload.sliceArray(currentOffset until endIdx)
+                    
+                    val isFirst = currentOffset == 0
+                    val isLast = endIdx >= jsonPayload.size
+
                     val header = when {
-                        chunks.size == 1 -> "SOLO:"
-                        currentChunk == 0 -> "STRT:"
-                        currentChunk == chunks.size - 1 -> "DONE:"
+                        isFirst && isLast -> "SOLO:"
+                        isFirst -> "STRT:"
+                        isLast -> "DONE:"
                         else -> "DATA:"
                     }
-                    char.value = header.toByteArray(Charsets.UTF_8) + chunks[currentChunk]
-                    gatt.writeCharacteristic(char)
+                    
+                    char.value = header.toByteArray(Charsets.UTF_8) + chunkData
+                    char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                    val writeOk = gatt.writeCharacteristic(char)
+                    if (!writeOk) {
+                        Log.e("GattClient", "writeCharacteristic returned false! Disconnecting...")
+                        gatt.disconnect()
+                    }
                 }
             }
 
             override fun onCharacteristicWrite(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    currentChunk++
-                    if (currentChunk < chunks.size) {
-                        sendNext(gatt)
+                    currentOffset += negotiatedChunkSize
+                    if (currentOffset < jsonPayload.size) {
+                        sendNextChunk(gatt)
                     } else {
                         isDone = true
                         mainHandler.post { onResult(true) }
                         gatt?.disconnect()
                     }
                 } else {
+                    Log.e("GattClient", "onCharacteristicWrite failed with status $status")
                     isDone = true
                     mainHandler.post { onResult(false) }
                     gatt?.disconnect()
@@ -250,19 +273,19 @@ class GattClientManager(private val context: Context) {
             return
         }
         val jsonPayload = gson.toJson(relayedMessage).toByteArray(Charsets.UTF_8)
-        
-        val chunkSize = 150 
-        val chunks = jsonPayload.indices.step(chunkSize).map { 
-            jsonPayload.sliceArray(it until (it + chunkSize).coerceAtMost(jsonPayload.size))
-        }
-
-        var currentChunk = 0
+        var negotiatedChunkSize = 20
+        var currentOffset = 0
         var isDone = false
 
         device.connectGatt(context, false, object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    gatt?.requestMtu(512)
+                    mainHandler.postDelayed({
+                        val mtuOk = gatt?.requestMtu(512) ?: false
+                        if (!mtuOk) {
+                            gatt?.discoverServices()
+                        }
+                    }, 150)
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     if (!isDone) {
                         isDone = true
@@ -288,6 +311,11 @@ class GattClientManager(private val context: Context) {
             }
 
             override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
+                if (status == BluetoothGatt.GATT_SUCCESS && mtu > 23) {
+                    negotiatedChunkSize = (mtu - 10).coerceAtMost(480)
+                } else {
+                    negotiatedChunkSize = 18
+                }
                 mainHandler.postDelayed({ gatt?.discoverServices() }, 200)
             }
 
@@ -298,31 +326,43 @@ class GattClientManager(private val context: Context) {
                     refreshGattCache(gatt)
                     mainHandler.postDelayed({ gatt?.discoverServices() }, 250)
                 } else {
-                    sendNext(gatt)
+                    currentOffset = 0
+                    sendNextChunk(gatt)
                 }
             }
 
-            private fun sendNext(gatt: BluetoothGatt?) {
+            private fun sendNextChunk(gatt: BluetoothGatt?) {
                 val service = gatt?.getService(GattServerManager.SERVICE_UUID)
                 val char = service?.getCharacteristic(GattServerManager.MESSAGE_CHARACTERISTIC_UUID)
                 
-                if (char != null && currentChunk < chunks.size) {
+                if (char != null && currentOffset < jsonPayload.size) {
+                    val endIdx = (currentOffset + negotiatedChunkSize).coerceAtMost(jsonPayload.size)
+                    val chunkData = jsonPayload.sliceArray(currentOffset until endIdx)
+                    
+                    val isFirst = currentOffset == 0
+                    val isLast = endIdx >= jsonPayload.size
+
                     val header = when {
-                        chunks.size == 1 -> "SOLO:"
-                        currentChunk == 0 -> "STRT:"
-                        currentChunk == chunks.size - 1 -> "DONE:"
+                        isFirst && isLast -> "SOLO:"
+                        isFirst -> "STRT:"
+                        isLast -> "DONE:"
                         else -> "DATA:"
                     }
-                    char.value = header.toByteArray(Charsets.UTF_8) + chunks[currentChunk]
-                    gatt.writeCharacteristic(char)
+                    
+                    char.value = header.toByteArray(Charsets.UTF_8) + chunkData
+                    char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                    val writeOk = gatt.writeCharacteristic(char)
+                    if (!writeOk) {
+                        gatt.disconnect()
+                    }
                 }
             }
 
             override fun onCharacteristicWrite(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    currentChunk++
-                    if (currentChunk < chunks.size) {
-                        sendNext(gatt)
+                    currentOffset += negotiatedChunkSize
+                    if (currentOffset < jsonPayload.size) {
+                        sendNextChunk(gatt)
                     } else {
                         isDone = true
                         mainHandler.post { onResult(true) }
