@@ -40,6 +40,7 @@ class GattClientManager(private val context: Context) {
         deviceAddress: String,
         chatMessage: ChatMessage,
         attempt: Int = 1,
+        onProgress: (Float) -> Unit = {},
         onResult: (Boolean) -> Unit = {}
     ) {
         val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
@@ -139,7 +140,7 @@ class GattClientManager(private val context: Context) {
                         if (attempt < 4) {
                             Log.w("GattClient", "Connection to '$resolvedAddress' failed/disconnected (attempt $attempt/4). Retrying in ${800 * attempt}ms...")
                             mainHandler.postDelayed({
-                                sendChatMessage(deviceAddress, chatMessage, attempt + 1, onResult)
+                                sendChatMessage(deviceAddress, chatMessage, attempt + 1, onProgress, onResult)
                             }, 800L * attempt)
                         } else {
                             mainHandler.post { onResult(false) }
@@ -216,6 +217,10 @@ class GattClientManager(private val context: Context) {
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     val bytesWritten = (currentOffset + negotiatedChunkSize).coerceAtMost(jsonPayload.size) - currentOffset
                     currentOffset += if (bytesWritten > 0) bytesWritten else negotiatedChunkSize
+                    
+                    val progress = (currentOffset.toFloat() / jsonPayload.size.toFloat()).coerceIn(0f, 1f)
+                    mainHandler.post { onProgress(progress) }
+
                     if (currentOffset < jsonPayload.size) {
                         sendNextChunk(gatt)
                     } else {
@@ -251,7 +256,7 @@ class GattClientManager(private val context: Context) {
             ttl = 3,
             isEmergency = isEmergency
         )
-        sendChatMessage(deviceAddress, msg, 1, onResult)
+        sendChatMessage(deviceAddress, msg, 1, {}, onResult)
     }
 
     fun broadcastToAll(peers: List<String>, messageText: String, isEmergency: Boolean = false) {
