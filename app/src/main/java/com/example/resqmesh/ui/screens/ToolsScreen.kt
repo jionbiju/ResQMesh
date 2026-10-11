@@ -59,6 +59,8 @@ fun ToolsScreen(
     var showMap by remember { mutableStateOf(false) }
     var showSignalFinder by remember { mutableStateOf(false) }
 
+    var isWhistleActive by remember { mutableStateOf(false) }
+
     val tools = listOf(
         ToolItem("Flashlight", Icons.Default.FlashlightOn, Color(0xFFFFD700), "Emergency light"),
         ToolItem("Compass", Icons.Default.Explore, Color(0xFF4CAF50), "Navigation"),
@@ -97,13 +99,19 @@ fun ToolsScreen(
             ) {
                 items(tools.size) { index ->
                     val tool = tools[index]
+                    val isWhistle = tool.name == "Whistle"
                     ToolCard(
                         tool = tool,
+                        isWhistle = isWhistle,
+                        isWhistleActive = isWhistleActive,
                         onClick = {
                             hardwareManager.vibrate()
                             when (tool.name) {
                                 "Flashlight" -> hardwareManager.toggleFlashlight()
-                                "Whistle" -> hardwareManager.playWhistle()
+                                "Whistle" -> {
+                                    isWhistleActive = !isWhistleActive
+                                    hardwareManager.playWhistle()
+                                }
                                 "Survival Guide" -> onSurvivalGuideClick()
                                 "Compass" -> showCompass = true
                                 "Maps" -> showMap = true
@@ -905,52 +913,86 @@ fun SignalCard(
 }
 
 @Composable
-fun ToolCard(tool: ToolItem, onClick: () -> Unit) {
+fun ToolCard(
+    tool: ToolItem, 
+    isWhistle: Boolean = false, 
+    isWhistleActive: Boolean = false, 
+    onClick: () -> Unit
+) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .height(160.dp),
         onClick = onClick,
         shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface,
+        color = if (isWhistle && isWhistleActive) tool.color.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surface,
+        border = if (isWhistle && isWhistleActive) androidx.compose.foundation.BorderStroke(2.dp, tool.color) else null,
         tonalElevation = 2.dp,
         shadowElevation = 2.dp
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
             Surface(
-                modifier = Modifier.size(64.dp),
+                modifier = Modifier.size(54.dp),
                 shape = CircleShape,
-                color = tool.color.copy(alpha = 0.1f)
+                color = tool.color.copy(alpha = 0.15f)
             ) {
                 Icon(
                     imageVector = tool.icon,
                     contentDescription = tool.name,
                     tint = tool.color,
-                    modifier = Modifier.padding(16.dp)
+                    modifier = Modifier.padding(14.dp)
                 )
             }
             
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             
             Text(
                 text = tool.name, 
                 fontWeight = FontWeight.ExtraBold, 
-                fontSize = 16.sp,
+                fontSize = 15.sp,
                 color = MaterialTheme.colorScheme.onSurface
             )
             
-            Text(
-                text = tool.description, 
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.secondary,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            if (isWhistle) {
+                Surface(
+                    color = if (isWhistleActive) Color.Red else tool.color.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (isWhistleActive) Icons.Default.Stop else Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = if (isWhistleActive) Color.White else tool.color,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (isWhistleActive) "STOP" else "START",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isWhistleActive) Color.White else tool.color
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    text = tool.description, 
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.secondary,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+            }
         }
     }
 }

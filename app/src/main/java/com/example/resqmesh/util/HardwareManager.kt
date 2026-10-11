@@ -101,13 +101,80 @@ class HardwareManager(private val context: Context) : SensorEventListener {
         }
     }
 
+    private var isWhistlePlaying = false
+    private var whistleThread: Thread? = null
+
     fun playWhistle() {
-        try {
-            val toneGen = ToneGenerator(AudioManager.STREAM_ALARM, 100)
-            toneGen.startTone(ToneGenerator.TONE_PROP_BEEP, 2000)
-        } catch (e: Exception) {
-            e.printStackTrace()
+        if (isWhistlePlaying) {
+            stopWhistle()
+            return
         }
+
+        isWhistlePlaying = true
+        whistleThread = Thread {
+            val sampleRate = 44100
+            val numSamples = sampleRate / 2 // 0.5s whistle burst
+            val sample = DoubleArray(numSamples)
+            val generatedSnd = ByteArray(2 * numSamples)
+
+            // Synthesize 2800 Hz distress whistle sine wave
+            val freqOfTone = 2800.0
+            for (i in 0 until numSamples) {
+                sample[i] = Math.sin(2.0 * Math.PI * i.toDouble() / (sampleRate / freqOfTone))
+            }
+
+            var idx = 0
+            for (dVal in sample) {
+                val valShort = (dVal * 32767).toInt().toShort()
+                generatedSnd[idx++] = (valShort.toInt() and 0x00ff).toByte()
+                generatedSnd[idx++] = (valShort.toInt() and 0xff00 ushr 8).toByte()
+            }
+
+            try {
+                @Suppress("DEPRECATION")
+                val minBufferSize = android.media.AudioTrack.getMinBufferSize(
+                    sampleRate,
+                    android.media.AudioFormat.CHANNEL_OUT_MONO,
+                    android.media.AudioFormat.ENCODING_PCM_16BIT
+                )
+
+                @Suppress("DEPRECATION")
+                val audioTrack = android.media.AudioTrack(
+                    AudioManager.STREAM_MUSIC,
+                    sampleRate,
+                    android.media.AudioFormat.CHANNEL_OUT_MONO,
+                    android.media.AudioFormat.ENCODING_PCM_16BIT,
+                    minBufferSize.coerceAtLeast(generatedSnd.size),
+                    android.media.AudioTrack.MODE_STREAM
+                )
+
+                audioTrack.play()
+
+                // Loop 3 short blasts pattern (Universal SOS Distress Whistle)
+                while (isWhistlePlaying) {
+                    for (blast in 0 until 3) {
+                        if (!isWhistlePlaying) break
+                        audioTrack.write(generatedSnd, 0, generatedSnd.size)
+                        Thread.sleep(150)
+                    }
+                    if (isWhistlePlaying) {
+                        Thread.sleep(600) // Pause between 3-blast groups
+                    }
+                }
+
+                audioTrack.stop()
+                audioTrack.release()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        whistleThread?.start()
+    }
+
+    fun stopWhistle() {
+        isWhistlePlaying = false
+        whistleThread?.interrupt()
+        whistleThread = null
     }
 
     fun vibrate() {
