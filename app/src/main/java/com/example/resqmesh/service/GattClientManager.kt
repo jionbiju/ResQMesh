@@ -47,19 +47,18 @@ class GattClientManager(private val context: Context) {
 
         // RESOLVE ADDRESS: Direct MACs connect directly; 2H targets resolve via 1H Relay MAC
         val resolvedAddress: String = run {
-            // 1. If deviceAddress is already a valid Bluetooth MAC, connect DIRECTLY to it!
-            if (BluetoothAdapter.checkBluetoothAddress(deviceAddress)) {
-                return@run deviceAddress
-            }
-
-            // 2. Look up in scanner peers
+            // Priority 1: Match target by Profile Name or ID in activePeers scanner list
+            val targetName = chatMessage.destinationId
             val peerMatch = activePeers.firstOrNull { 
-                it.id == deviceAddress || it.name.equals(deviceAddress, ignoreCase = true) 
+                it.id == deviceAddress || 
+                it.name.equals(deviceAddress, ignoreCase = true) ||
+                (targetName.isNotBlank() && targetName != "BROADCAST" && it.name.equals(targetName, ignoreCase = true))
             }
 
             if (peerMatch != null) {
                 // Direct 1-Hop peer with valid MAC
                 if (peerMatch.hops == 1 && BluetoothAdapter.checkBluetoothAddress(peerMatch.id)) {
+                    Log.d("GattClient", "Target '$targetName' resolved to active 1H MAC '${peerMatch.id}'")
                     return@run peerMatch.id
                 }
                 
@@ -70,7 +69,7 @@ class GattClientManager(private val context: Context) {
                         it.hops == 1 && BluetoothAdapter.checkBluetoothAddress(it.id)
                     }
                     if (relayPeer != null) {
-                        Log.d("GattClient", "Target '$deviceAddress' (2H) routed via 1H Relay MAC '${relayPeer.id}'")
+                        Log.d("GattClient", "Target '$targetName' (2H) routed via 1H Relay MAC '${relayPeer.id}'")
                         return@run relayPeer.id
                     }
                     if (BluetoothAdapter.checkBluetoothAddress(peerMatch.relayedBy)) {
@@ -79,7 +78,12 @@ class GattClientManager(private val context: Context) {
                 }
             }
 
-            // 3. Fallback: Find ANY active 1-Hop direct neighbor MAC
+            // Priority 2: Direct Bluetooth MAC address if valid
+            if (BluetoothAdapter.checkBluetoothAddress(deviceAddress)) {
+                return@run deviceAddress
+            }
+
+            // Priority 3: Fallback to ANY active 1-Hop direct neighbor MAC
             val direct1Hop = activePeers.firstOrNull { it.hops == 1 && BluetoothAdapter.checkBluetoothAddress(it.id) }?.id
             if (direct1Hop != null) {
                 Log.d("GattClient", "Fallback: Routing via 1H direct neighbor MAC '$direct1Hop' for target '$deviceAddress'")

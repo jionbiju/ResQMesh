@@ -1,10 +1,14 @@
 package com.example.resqmesh.ui.screens
 
+import android.Manifest
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.MediaPlayer
+import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -15,6 +19,7 @@ import android.webkit.MimeTypeMap
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -45,6 +50,11 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
@@ -57,7 +67,138 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
 
     var transferProgress by remember { mutableFloatStateOf(0f) }
     var isTransferring by remember { mutableStateOf(false) }
-    
+
+    // Audio Voice Note Recording State
+    var isRecordingAudio by remember { mutableStateOf(false) }
+    var mediaRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var audioFile by remember { mutableStateOf<File?>(null) }
+
+    // Function to Start or Stop Audio Recording
+    fun toggleAudioRecording() {
+        if (!isRecordingAudio) {
+            try {
+                val outputFile = File(context.cacheDir, "voice_${System.currentTimeMillis()}.m4a")
+                audioFile = outputFile
+                
+                val sources = listOf(
+                    MediaRecorder.AudioSource.MIC,
+                    MediaRecorder.AudioSource.DEFAULT,
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION
+                )
+                var startedRecorder: MediaRecorder? = null
+
+                for (src in sources) {
+                    var tempRecorder: MediaRecorder? = null
+                    try {
+                        @Suppress("DEPRECATION")
+                        val recorder = MediaRecorder()
+                        tempRecorder = recorder
+                        recorder.setAudioSource(src)
+                        recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                        recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                        recorder.setAudioSamplingRate(16000)
+                        recorder.setAudioEncodingBitRate(24000)
+                        recorder.setOutputFile(outputFile.absolutePath)
+                        recorder.prepare()
+                        recorder.start()
+                        startedRecorder = recorder
+                        break
+                    } catch (e: Exception) {
+                        try {
+                            tempRecorder?.release()
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+
+                if (startedRecorder != null) {
+                    mediaRecorder = startedRecorder
+                    isRecordingAudio = true
+                    Toast.makeText(context, "🎙️ Recording Voice Note...", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Microphone hardware busy or in use", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Microphone in use by another app", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            try {
+                mediaRecorder?.apply {
+                    stop()
+                    release()
+                }
+                mediaRecorder = null
+                isRecordingAudio = false
+
+                val file = audioFile
+                if (file != null && file.exists() && file.length() > 0) {
+                    val audioBytes = file.readBytes()
+                    if (audioBytes.size <= 250 * 1024) {
+                        val base64Audio = Base64.encodeToString(audioBytes, Base64.NO_WRAP)
+                        val voicePayload = "FILE_PAYLOAD|${file.name}|$base64Audio"
+
+                        val targetDestination = if (peerId == "BROADCAST") "BROADCAST" else if (peerName.isNotBlank() && peerName != "User") peerName else peerId
+                        val voiceMessage = ChatMessage(
+                            messageId = UUID.randomUUID().toString(),
+                            senderId = "ME",
+                            destinationId = targetDestination,
+                            text = voicePayload,
+                            isFromMe = true,
+                            timestamp = System.currentTimeMillis(),
+                            ttl = 3
+                        )
+                        ChatRepository.addMessage(voiceMessage)
+
+                        if (peerId == "BROADCAST") {
+                            val activePeers = MeshManager.getScanner()?.foundPeers?.value?.map { it.id } ?: emptyList()
+                            clientManager.broadcastToAll(activePeers, voicePayload, isEmergency = false)
+                        } else {
+                            isTransferring = true
+                            transferProgress = 0.05f
+                            clientManager.sendChatMessage(
+                                peerId,
+                                voiceMessage,
+                                onProgress = { p -> transferProgress = p; isTransferring = true },
+                                onResult = { success ->
+                                    isTransferring = false
+                                    if (!success) {
+                                        Toast.makeText(context, "Stored in Mesh Queue", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, "Voice Note Sent 100%!", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            )
+                        }
+                    } else {
+                        Toast.makeText(context, "Voice note too long (max 250 KB)", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                isRecordingAudio = false
+                mediaRecorder = null
+                Toast.makeText(context, "Error saving audio recording", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            toggleAudioRecording()
+        } else {
+            Toast.makeText(context, "Microphone permission required to record voice notes", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun handleMicClick() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            toggleAudioRecording()
+        } else {
+            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     val allMessages by ChatRepository.allMessages.collectAsState()
     val messages = allMessages.filter { msg ->
         if (peerId == "BROADCAST") {
@@ -248,6 +389,8 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                     text = messageText,
                     onTextChange = { messageText = it },
                     onAttachClick = { filePickerLauncher.launch("*/*") },
+                    onMicClick = { toggleAudioRecording() },
+                    isRecordingAudio = isRecordingAudio,
                     onSendClick = {
                         if (messageText.isNotBlank() && !isSending) {
                             val msgToSend = messageText
@@ -281,7 +424,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                                 clientManager.sendChatMessage(peerId, outgoingMessage) { success ->
                                     isSending = false
                                     if (!success) {
-                                        Toast.makeText(context, "Peer offline. Message stored for automatic delivery.", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Stored in Mesh Queue (Will auto-deliver when peer connects)", Toast.LENGTH_SHORT).show()
                                     }
                                 }
                             }
@@ -330,6 +473,14 @@ fun ChatBubble(message: ChatMessage) {
                 val fileName = parts.getOrNull(1) ?: "Attachment"
                 val base64Data = parts.getOrNull(2) ?: ""
 
+                val isAudioVoiceNote = fileName.endsWith(".m4a", true) || 
+                                       fileName.endsWith(".aac", true) || 
+                                       fileName.endsWith(".mp3", true) || 
+                                       fileName.startsWith("voice_")
+
+                var isPlayingAudio by remember { mutableStateOf(false) }
+                var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
+
                 Surface(
                     color = color,
                     shape = shape,
@@ -345,7 +496,7 @@ fun ChatBubble(message: ChatMessage) {
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = if (fileName.contains(".png", true) || fileName.contains(".jpg", true)) Icons.Default.Image else Icons.Default.InsertDriveFile,
+                                    imageVector = if (isAudioVoiceNote) Icons.Default.Mic else if (fileName.contains(".png", true) || fileName.contains(".jpg", true)) Icons.Default.Image else Icons.Default.InsertDriveFile,
                                     contentDescription = null,
                                     tint = textColor
                                 )
@@ -353,7 +504,7 @@ fun ChatBubble(message: ChatMessage) {
                             Spacer(modifier = Modifier.width(10.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    fileName,
+                                    if (isAudioVoiceNote) "🎙️ Voice Note" else fileName,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp,
                                     color = textColor,
@@ -361,7 +512,7 @@ fun ChatBubble(message: ChatMessage) {
                                 )
                                 val sizeKb = (base64Data.length * 3 / 4) / 1024
                                 Text(
-                                    "$sizeKb KB • Offline Transfer",
+                                    "$sizeKb KB • Offline Audio",
                                     fontSize = 10.sp,
                                     color = textColor.copy(alpha = 0.7f)
                                 )
@@ -370,20 +521,64 @@ fun ChatBubble(message: ChatMessage) {
 
                         Spacer(modifier = Modifier.height(10.dp))
 
-                        Button(
-                            onClick = {
-                                saveAndOpenFile(context, fileName, base64Data)
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = textColor.copy(alpha = 0.2f),
-                                contentColor = textColor
-                            ),
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(vertical = 6.dp)
-                        ) {
-                            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Save / Open File", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        if (isAudioVoiceNote) {
+                            Button(
+                                onClick = {
+                                    if (!isPlayingAudio) {
+                                        try {
+                                            val rawBytes = Base64.decode(base64Data, Base64.DEFAULT)
+                                            val tempAudioFile = File(context.cacheDir, "play_$fileName")
+                                            FileOutputStream(tempAudioFile).use { it.write(rawBytes) }
+
+                                            val player = MediaPlayer().apply {
+                                                setDataSource(tempAudioFile.absolutePath)
+                                                prepare()
+                                                start()
+                                                setOnCompletionListener {
+                                                    isPlayingAudio = false
+                                                    mediaPlayer?.release()
+                                                    mediaPlayer = null
+                                                }
+                                            }
+                                            mediaPlayer = player
+                                            isPlayingAudio = true
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Error playing audio note", Toast.LENGTH_SHORT).show()
+                                        }
+                                    } else {
+                                        mediaPlayer?.stop()
+                                        mediaPlayer?.release()
+                                        mediaPlayer = null
+                                        isPlayingAudio = false
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = textColor.copy(alpha = 0.2f),
+                                    contentColor = textColor
+                                ),
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(vertical = 6.dp)
+                            ) {
+                                Icon(if (isPlayingAudio) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(if (isPlayingAudio) "Pause Voice Note" else "Play Voice Note", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            Button(
+                                onClick = {
+                                    saveAndOpenFile(context, fileName, base64Data)
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = textColor.copy(alpha = 0.2f),
+                                    contentColor = textColor
+                                ),
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(vertical = 6.dp)
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Save / Open File", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -418,6 +613,8 @@ fun BottomMessageBar(
     text: String,
     onTextChange: (String) -> Unit,
     onAttachClick: () -> Unit,
+    onMicClick: () -> Unit,
+    isRecordingAudio: Boolean,
     onSendClick: () -> Unit
 ) {
     Surface(
@@ -440,27 +637,53 @@ fun BottomMessageBar(
                 )
             }
 
+            IconButton(onClick = onMicClick) {
+                Icon(
+                    imageVector = if (isRecordingAudio) Icons.Default.Stop else Icons.Default.Mic,
+                    contentDescription = "Voice Note",
+                    tint = if (isRecordingAudio) Color.Red else MaterialTheme.colorScheme.primary
+                )
+            }
+
             Spacer(modifier = Modifier.width(4.dp))
 
             Surface(
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                color = if (isRecordingAudio) Color.Red.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
             ) {
-                TextField(
-                    value = text,
-                    onValueChange = onTextChange,
-                    placeholder = { Text("Type offline message...") },
-                    colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color.Transparent,
-                        unfocusedContainerColor = Color.Transparent,
-                        disabledContainerColor = Color.Transparent,
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent,
-                    ),
-                    maxLines = 4,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                if (isRecordingAudio) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier.size(10.dp).clip(CircleShape).background(Color.Red)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            "Recording Voice Note... Tap ⏹ to send",
+                            color = Color.Red,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                } else {
+                    TextField(
+                        value = text,
+                        onValueChange = onTextChange,
+                        placeholder = { Text("Type offline message...") },
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent,
+                        ),
+                        maxLines = 4,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
             
             Spacer(modifier = Modifier.width(8.dp))
