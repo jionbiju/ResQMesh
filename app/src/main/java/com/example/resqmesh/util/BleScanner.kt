@@ -156,21 +156,20 @@ class BleScanner(private val context: Context) {
         startScan()
     }
 
-    private val forwardCooldowns = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val forwardedMessageIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     private fun forwardPendingMessagesToPeer(peerAddress: String) {
-        val now = System.currentTimeMillis()
-        val lastForward = forwardCooldowns[peerAddress] ?: 0L
-        if (now - lastForward < 120_000) return // 2-minute cooldown per address
-        
         val pendingMessages = ChatRepository.getPendingStoreAndForwardMessages()
         if (pendingMessages.isNotEmpty()) {
-            forwardCooldowns[peerAddress] = now
-            android.util.Log.d("BleScanner", "Store-and-Forward: Forwarding ${pendingMessages.size} pending messages to $peerAddress")
             val clientManager = GattClientManager(context)
             for (msg in pendingMessages) {
-                val forwardMsg = msg.copy(ttl = msg.ttl - 1)
-                clientManager.relayMeshMessage(peerAddress, forwardMsg)
+                val key = "${msg.messageId}_$peerAddress"
+                if (!forwardedMessageIds.contains(key)) {
+                    forwardedMessageIds.add(key)
+                    android.util.Log.d("BleScanner", "Store-and-Forward: Forwarding pending message '${msg.messageId}' to $peerAddress")
+                    val forwardMsg = msg.copy(ttl = msg.ttl - 1)
+                    clientManager.relayMeshMessage(peerAddress, forwardMsg)
+                }
             }
         }
     }

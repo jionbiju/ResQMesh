@@ -126,11 +126,11 @@ class GattServerManager(private val context: Context) {
                 }
 
                 // Check if this DM is intended for ME or BROADCAST
-                val storage = ResQStorage(context)
-                val myProfileName = runBlocking { storage.userName.first() } ?: "User"
+                val myProfileName = MeshManager.activeUserName
 
                 val isIntendedForMe = meshMessage.destinationId == "BROADCAST" ||
                                       meshMessage.destinationId == "ME" ||
+                                      myProfileName == "User" ||
                                       meshMessage.destinationId.equals(myProfileName, ignoreCase = true)
                 
                 val receivedMessage = meshMessage.copy(
@@ -167,10 +167,13 @@ class GattServerManager(private val context: Context) {
                     )
                 }
 
-                // MULTI-HOP FORWARDING (FORWARD original encrypted wire payload)
+                // MULTI-HOP FORWARDING (EVENT-DRIVEN IMMEDIATE RELAY)
                 if (meshMessage.ttl > 1) {
                     val nextHopTtl = meshMessage.ttl - 1
-                    val relayMessage = meshMessage.copy(ttl = nextHopTtl)
+                    val relayMessage = meshMessage.copy(
+                        ttl = nextHopTtl,
+                        via = MeshManager.activeUserName
+                    )
                     
                     val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
                     val targetPeerAddresses = activePeers
@@ -178,8 +181,8 @@ class GattServerManager(private val context: Context) {
                         .filter { it != deviceAddress && it != finalSenderId }
 
                     if (targetPeerAddresses.isNotEmpty()) {
-                        delay(800)
-                        Log.d("GattServer", "Multi-Hop Relaying (TTL: $nextHopTtl) to ${targetPeerAddresses.size} peers...")
+                        delay(300)
+                        Log.d("GattServer", "Event-Driven Multi-Hop Relaying (TTL: $nextHopTtl) via '${MeshManager.activeUserName}' to ${targetPeerAddresses.size} peers...")
                         GattClientManager(context).relayToAllPeers(targetPeerAddresses, relayMessage)
                     }
                 }

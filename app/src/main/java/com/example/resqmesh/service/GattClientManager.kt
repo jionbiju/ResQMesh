@@ -231,6 +231,12 @@ class GattClientManager(private val context: Context) {
                         isDone = true
                         mainHandler.post { onResult(true) }
                         gatt?.disconnect()
+                        try {
+                            val myName = MeshManager.activeUserName
+                            MeshManager.getAdvertiser()?.startAdvertising(myName)
+                        } catch (e: Exception) {
+                            Log.e("GattClient", "Error restarting advertiser: ${e.message}")
+                        }
                     }
                 } else {
                     Log.e("GattClient", "onCharacteristicWrite failed with status $status")
@@ -390,6 +396,12 @@ class GattClientManager(private val context: Context) {
                         isDone = true
                         mainHandler.post { onResult(true) }
                         gatt?.disconnect()
+                        try {
+                            val myName = MeshManager.activeUserName
+                            MeshManager.getAdvertiser()?.startAdvertising(myName)
+                        } catch (e: Exception) {
+                            Log.e("GattClient", "Error restarting advertiser: ${e.message}")
+                        }
                     }
                 } else {
                     isDone = true
