@@ -24,6 +24,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -441,7 +442,16 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
             }
         }
     ) { paddingValues ->
+        val listState = rememberLazyListState()
+
+        LaunchedEffect(messages.size) {
+            if (messages.isNotEmpty()) {
+                listState.scrollToItem(messages.size - 1)
+            }
+        }
+
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
@@ -449,7 +459,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(top = 16.dp, bottom = 16.dp)
         ) {
-            items(messages) { message ->
+            items(messages, key = { it.messageId }) { message ->
                 ChatBubble(message)
             }
         }
