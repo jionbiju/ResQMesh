@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 
 object ChatRepository {
     private var database: AppDatabase? = null
@@ -20,6 +21,9 @@ object ChatRepository {
 
     private val _emergencyEvents = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 1)
     val emergencyEvents = _emergencyEvents.asSharedFlow()
+
+    // Explicit store-and-forward pending queue (Only messages that actually failed delivery)
+    private val pendingStoreAndForward = ConcurrentHashMap<String, ChatMessage>()
 
     fun init(context: Context) {
         if (database == null) {
@@ -40,11 +44,22 @@ object ChatRepository {
         return !db.messageDao().hasMessage(messageId)
     }
 
+    fun markMessagePending(message: ChatMessage) {
+        if (message.ttl > 1) {
+            pendingStoreAndForward[message.messageId] = message
+            Log.d("ChatRepository", "Message ${message.messageId} marked pending store-and-forward.")
+        }
+    }
+
+    fun markMessageDelivered(messageId: String) {
+        pendingStoreAndForward.remove(messageId)
+        Log.d("ChatRepository", "Message $messageId marked delivered.")
+    }
+
     fun addMessage(message: ChatMessage) {
         val db = database
         if (db == null) {
             Log.e("ChatRepository", "Cannot add message: Database not initialized!")
-            // Fallback for safety if DB fails to init
             val currentList = _allMessages.value.toMutableList()
             currentList.add(message)
             _allMessages.value = currentList
@@ -74,7 +89,7 @@ object ChatRepository {
     fun getPendingStoreAndForwardMessages(): List<ChatMessage> {
         val now = System.currentTimeMillis()
         val oneHourAgo = now - (60 * 60 * 1000)
-        return _allMessages.value.filter { msg ->
+        return pendingStoreAndForward.values.filter { msg ->
             msg.ttl > 1 && msg.timestamp > oneHourAgo
         }
     }
@@ -104,6 +119,7 @@ object ChatRepository {
                     db.messageDao().deleteAllMessages()
                 }
                 _allMessages.value = emptyList()
+                pendingStoreAndForward.clear()
                 Log.d("ChatRepository", "Cleared ALL chat history from DB")
             } catch (e: Exception) {
                 Log.e("ChatRepository", "Error clearing all messages: ${e.message}")

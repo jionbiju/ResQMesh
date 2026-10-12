@@ -28,7 +28,11 @@ class BleAdvertiser(context: Context) {
         }
 
         override fun onStartFailure(errorCode: Int) {
-            Log.e("BleAdvertiser", "Failed to start advertising: $errorCode")
+            if (errorCode == ADVERTISE_FAILED_ALREADY_STARTED) {
+                Log.d("BleAdvertiser", "BLE Advertiser is already active.")
+            } else {
+                Log.e("BleAdvertiser", "Failed to start advertising: $errorCode")
+            }
         }
     }
 

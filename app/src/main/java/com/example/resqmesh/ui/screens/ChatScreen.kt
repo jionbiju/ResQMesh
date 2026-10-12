@@ -162,8 +162,10 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                                 onResult = { success ->
                                     isTransferring = false
                                     if (!success) {
+                                        ChatRepository.markMessagePending(voiceMessage)
                                         Toast.makeText(context, "Stored in Mesh Queue", Toast.LENGTH_SHORT).show()
                                     } else {
+                                        ChatRepository.markMessageDelivered(voiceMessage.messageId)
                                         Toast.makeText(context, "Voice Note Sent 100%!", Toast.LENGTH_SHORT).show()
                                     }
                                 }
@@ -255,8 +257,10 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                             onResult = { success ->
                                 isTransferring = false
                                 if (!success) {
+                                    ChatRepository.markMessagePending(fileMessage)
                                     Toast.makeText(context, "Peer offline. File stored for automatic delivery.", Toast.LENGTH_SHORT).show()
                                 } else {
+                                    ChatRepository.markMessageDelivered(fileMessage.messageId)
                                     Toast.makeText(context, "File Transfer Completed 100%!", Toast.LENGTH_SHORT).show()
                                 }
                             }
@@ -424,7 +428,10 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                                 clientManager.sendChatMessage(peerId, outgoingMessage) { success ->
                                     isSending = false
                                     if (!success) {
+                                        ChatRepository.markMessagePending(outgoingMessage)
                                         Toast.makeText(context, "Stored in Mesh Queue (Will auto-deliver when peer connects)", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        ChatRepository.markMessageDelivered(outgoingMessage.messageId)
                                     }
                                 }
                             }

@@ -15,8 +15,6 @@ import com.example.resqmesh.util.BleAdvertiser
 import com.example.resqmesh.util.BleScanner
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-
-import com.example.resqmesh.domain.models.ChatMessage
 import kotlinx.coroutines.*
 
 /**
@@ -70,7 +68,6 @@ object MeshManager {
 class MeshService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private var announceJob: Job? = null
 
     companion object {
         private const val CHANNEL_ID = "mesh_relay_channel"
@@ -151,36 +148,9 @@ class MeshService : Service() {
         MeshManager.getAdvertiser()?.startAdvertising(userName)
         MeshManager.getGattServer()?.startServer()
         MeshManager.setMeshActiveState(true)
-
-        // Start Periodic Node Announcement Loop (Staggered Jitter Delay prevents GATT collisions)
-        announceJob?.cancel()
-        announceJob = serviceScope.launch {
-            while (isActive) {
-                val jitter = kotlin.random.Random.nextLong(0, 5000)
-                delay(8_000L + jitter)
-                broadcastNodeAnnouncement(userName)
-            }
-        }
-    }
-
-    private fun broadcastNodeAnnouncement(userName: String) {
-        val activePeers = MeshManager.getScanner()?.foundPeers?.value?.map { it.id } ?: emptyList()
-        if (activePeers.isNotEmpty()) {
-            val announceMsg = ChatMessage(
-                messageId = "ANN-" + java.util.UUID.randomUUID().toString().take(8),
-                senderId = userName,
-                destinationId = "ANNOUNCE",
-                text = "ANNOUNCE",
-                isFromMe = false,
-                timestamp = System.currentTimeMillis(),
-                ttl = 2 // 2 Hops so indirect neighbors discover each other!
-            )
-            GattClientManager(applicationContext).relayToAllPeers(activePeers, announceMsg)
-        }
     }
 
     private fun stopForegroundMesh() {
-        announceJob?.cancel()
         MeshManager.getScanner()?.stopScan()
         MeshManager.getAdvertiser()?.stopAdvertising()
         MeshManager.getGattServer()?.stopServer()

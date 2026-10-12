@@ -32,6 +32,15 @@ class GattServerManager(private val context: Context) {
     }
 
     private val gattServerCallback = object : BluetoothGattServerCallback() {
+        override fun onServiceAdded(status: Int, service: BluetoothGattService?) {
+            super.onServiceAdded(status, service)
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                Log.d("GattServer", "ResQmesh GATT Service added successfully.")
+            } else {
+                Log.e("GattServer", "Failed to add ResQmesh GATT Service, status: $status")
+            }
+        }
+
         @SuppressLint("MissingPermission")
         override fun onCharacteristicWriteRequest(
             device: BluetoothDevice?,
@@ -202,6 +211,10 @@ class GattServerManager(private val context: Context) {
             // Ignore
         }
         gattServer = bluetoothManager.openGattServer(context, gattServerCallback)
+        if (gattServer == null) {
+            Log.e("GattServer", "openGattServer returned null. Bluetooth may be off or unsupported.")
+            return
+        }
         val service = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
         val messageChar = BluetoothGattCharacteristic(
             MESSAGE_CHARACTERISTIC_UUID,
@@ -214,6 +227,11 @@ class GattServerManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun stopServer() {
-        gattServer?.close()
+        try {
+            gattServer?.close()
+            gattServer = null
+        } catch (e: Exception) {
+            Log.e("GattServer", "Error stopping GattServer: ${e.message}")
+        }
     }
 }
