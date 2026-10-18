@@ -1,25 +1,23 @@
 package com.example.resqmesh.util
 
 import android.content.Context
-import android.hardware.camera2.CameraManager
-import android.media.AudioManager
-import android.media.ToneGenerator
-import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
-
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.hardware.camera2.CameraManager
+import android.media.AudioManager
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class HardwareManager(private val context: Context) : SensorEventListener {
     private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    
+
     private var cameraId: String? = null
     private var isFlashOn = false
 
@@ -40,7 +38,7 @@ class HardwareManager(private val context: Context) : SensorEventListener {
     fun startCompass() {
         val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         val magnetometer = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
-        
+
         sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI)
         sensorManager.registerListener(this, magnetometer, SensorManager.SENSOR_DELAY_UI)
     }
@@ -76,10 +74,9 @@ class HardwareManager(private val context: Context) : SensorEventListener {
             if (SensorManager.getRotationMatrix(R, I, g, m)) {
                 val orientation = FloatArray(3)
                 SensorManager.getOrientation(R, orientation)
-                // Convert to degrees and update flow
                 val degree = Math.toDegrees(orientation[0].toDouble()).toFloat()
                 val smoothedDegree = (degree + 360) % 360
-                
+
                 // Only update if change is significant to avoid tiny jitters
                 if (Math.abs(_azimuth.value - smoothedDegree) > 0.8f) {
                     _azimuth.value = smoothedDegree

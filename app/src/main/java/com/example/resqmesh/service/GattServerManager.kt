@@ -11,9 +11,6 @@ import com.example.resqmesh.util.NotificationHelper
 import com.google.gson.Gson
 import kotlinx.coroutines.*
 import java.util.*
-
-import com.example.resqmesh.util.ResQStorage
-import kotlinx.coroutines.flow.first
 import java.util.concurrent.ConcurrentHashMap
 
 class GattServerManager(private val context: Context) {
@@ -52,7 +49,7 @@ class GattServerManager(private val context: Context) {
             value: ByteArray?
         ) {
             super.onCharacteristicWriteRequest(device, requestId, characteristic, preparedWrite, responseNeeded, offset, value)
-            
+
             if (preparedWrite) {
                 if (responseNeeded && device != null) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, 0, null)
@@ -64,7 +61,7 @@ class GattServerManager(private val context: Context) {
                 val dataStr = String(value, Charsets.UTF_8)
                 val devAddr = device?.address ?: "Unknown"
                 val buffer = deviceBuffers.getOrPut(devAddr) { StringBuilder() }
-                
+
                 when {
                     dataStr.startsWith("STRT:") -> {
                         buffer.setLength(0)
@@ -86,7 +83,7 @@ class GattServerManager(private val context: Context) {
                         processFullMessage(dataStr, devAddr)
                     }
                 }
-                
+
                 if (responseNeeded && device != null) {
                     gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
                 }
@@ -102,33 +99,56 @@ class GattServerManager(private val context: Context) {
 
                 val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
                 val decryptedText = cryptoHelper.decrypt(meshMessage.text, dummySecret) ?: "[Encrypted]"
-                
-                // Determine real sender identity (Profile Name / Static ID)
-                val finalSenderId = if (meshMessage.senderId.isNotBlank() && meshMessage.senderId != "02:00:00:00:00:00" && meshMessage.senderId != "ME") {
+
+                // Determine real original sender identity (Profile Name / Static ID)
+                val finalSenderId = if (meshMessage.senderId.isNotBlank() &&
+                    meshMessage.senderId != "02:00:00:00:00:00" &&
+                    meshMessage.senderId != "ME"
+                ) {
                     meshMessage.senderId
                 } else {
                     deviceAddress
                 }
 
+                // Identify the immediate 1-hop neighbor that forwarded this packet
+                val hopSenderName = if (!meshMessage.via.isNullOrBlank()) {
+                    meshMessage.via!!
+                } else {
+                    finalSenderId
+                }
+
                 // Handle Node Announcement Frames (Discovery Pings)
-                if (meshMessage.destinationId == "ANNOUNCE" || meshMessage.text == "ANNOUNCE") {
-                    if (meshMessage.ttl >= 2) {
+                if (meshMessage.destinationId == "ANNOUNCE" || decryptedText == "ANNOUNCE" || meshMessage.text == "ANNOUNCE") {
+                    if (meshMessage.ttl >= 3) {
                         MeshManager.getScanner()?.updatePeerName(deviceAddress, finalSenderId)
-                    }
-                    if (meshMessage.ttl < 2 && finalSenderId != deviceAddress) {
+                    } else if (finalSenderId != deviceAddress) {
                         MeshManager.getScanner()?.addRelayedPeer(
                             peerId = finalSenderId,
                             peerName = finalSenderId,
-                            relayedByAddress = deviceAddress
+                            relayedByAddress = hopSenderName
                         )
                     }
-                    // Relay ANNOUNCE to other peers if TTL > 1
+
+                    // Relay ANNOUNCE to other 1-hop peers if TTL > 1
                     if (meshMessage.ttl > 1) {
                         val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
-                        val targetPeerAddresses = activePeers.map { it.id }.filter { it != deviceAddress }
+                        val targetPeerAddresses = activePeers
+                            .filter { it.hops == 1 }
+                            .filter {
+                                it.id != deviceAddress &&
+                                        !it.name.equals(finalSenderId, ignoreCase = true) &&
+                                        !it.name.equals(hopSenderName, ignoreCase = true)
+                            }
+                            .map { it.id }
+
                         if (targetPeerAddresses.isNotEmpty()) {
-                            delay(800)
-                            GattClientManager(context).relayToAllPeers(targetPeerAddresses, meshMessage.copy(ttl = meshMessage.ttl - 1))
+                            delay(400)
+                            val relayAnnounce = meshMessage.copy(
+                                senderId = finalSenderId,
+                                ttl = meshMessage.ttl - 1,
+                                via = MeshManager.activeUserName
+                            )
+                            GattClientManager(context).relayToAllPeers(targetPeerAddresses, relayAnnounce)
                         }
                     }
                     return@launch
@@ -138,16 +158,16 @@ class GattServerManager(private val context: Context) {
                 val myProfileName = MeshManager.activeUserName
 
                 val isIntendedForMe = meshMessage.destinationId == "BROADCAST" ||
-                                      meshMessage.destinationId == "ME" ||
-                                      myProfileName == "User" ||
-                                      meshMessage.destinationId.equals(myProfileName, ignoreCase = true)
-                
+                        meshMessage.destinationId == "ME" ||
+                        myProfileName == "User" ||
+                        meshMessage.destinationId.equals(myProfileName, ignoreCase = true)
+
                 val receivedMessage = meshMessage.copy(
                     senderId = finalSenderId,
                     text = decryptedText,
                     isFromMe = false
                 )
-                
+
                 // ONLY save to local inbox if message is intended for ME or BROADCAST
                 if (isIntendedForMe) {
                     ChatRepository.addMessage(receivedMessage)
@@ -161,33 +181,48 @@ class GattServerManager(private val context: Context) {
                 } else {
                     Log.d("GattServer", "Relay Node: DM for '${meshMessage.destinationId}' received. Relaying without storing in local inbox.")
                 }
-                
+
                 // ONLY update direct neighbor's name if this was a DIRECT 1-hop transmission (TTL >= 3)
                 if (meshMessage.ttl >= 3) {
                     MeshManager.getScanner()?.updatePeerName(deviceAddress, finalSenderId)
                 }
-                
+
                 // Only register a 2-hop relayed peer if the packet was ACTUALLY relayed (TTL < 3)
-                if (meshMessage.ttl < 3 && finalSenderId != deviceAddress && finalSenderId != "02:00:00:00:00:00" && finalSenderId != "ME" && finalSenderId != "BROADCAST") {
+                if (meshMessage.ttl < 3 &&
+                    finalSenderId != deviceAddress &&
+                    finalSenderId != "02:00:00:00:00:00" &&
+                    finalSenderId != "ME" &&
+                    finalSenderId != "BROADCAST"
+                ) {
                     MeshManager.getScanner()?.addRelayedPeer(
                         peerId = finalSenderId,
                         peerName = finalSenderId,
-                        relayedByAddress = deviceAddress
+                        relayedByAddress = hopSenderName
                     )
                 }
 
                 // MULTI-HOP FORWARDING (EVENT-DRIVEN IMMEDIATE RELAY)
-                if (meshMessage.ttl > 1) {
+                // Forward if TTL > 1 AND (it's a BROADCAST OR it's a DM meant for someone else)
+                val shouldRelay = meshMessage.ttl > 1 &&
+                        (meshMessage.destinationId == "BROADCAST" || !meshMessage.destinationId.equals(myProfileName, ignoreCase = true))
+
+                if (shouldRelay) {
                     val nextHopTtl = meshMessage.ttl - 1
                     val relayMessage = meshMessage.copy(
+                        senderId = finalSenderId,
                         ttl = nextHopTtl,
                         via = MeshManager.activeUserName
                     )
-                    
+
                     val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
                     val targetPeerAddresses = activePeers
+                        .filter { it.hops == 1 }
+                        .filter {
+                            it.id != deviceAddress &&
+                                    !it.name.equals(finalSenderId, ignoreCase = true) &&
+                                    !it.name.equals(hopSenderName, ignoreCase = true)
+                        }
                         .map { it.id }
-                        .filter { it != deviceAddress && it != finalSenderId }
 
                     if (targetPeerAddresses.isNotEmpty()) {
                         delay(300)

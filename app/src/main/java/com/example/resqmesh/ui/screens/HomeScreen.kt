@@ -31,7 +31,7 @@ fun HomeScreen(
 ) {
     var selectedTab by remember { mutableIntStateOf(if (scanResult != null) 2 else 0) }
     val context = LocalContext.current
-    
+
     // Initialize MeshManager with Application Context
     LaunchedEffect(Unit) {
         MeshManager.init(context)
@@ -39,22 +39,22 @@ fun HomeScreen(
 
     val isMeshActive by MeshManager.isMeshActive.collectAsState()
     val bleScanner = MeshManager.getScanner()
-    
+
     val storage = remember { com.example.resqmesh.util.ResQStorage(context) }
     val profileName by storage.userName.collectAsState(initial = "User")
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { 
+                title = {
                     Text(
                         text = when(selectedTab) {
                             0 -> "Messages"
                             1 -> "Emergency Toolkit"
                             else -> "Profile"
-                        }, 
+                        },
                         fontWeight = FontWeight.Bold
-                    ) 
+                    )
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -106,10 +106,10 @@ fun HomeScreen(
                         MessageListSection(
                             bleScanner = bleScanner,
                             isActive = isMeshActive,
-                            onToggle = { 
+                            onToggle = {
                                 val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
                                 val adapter = bluetoothManager.adapter
-                                
+
                                 if (adapter == null) {
                                     Toast.makeText(context, "Bluetooth not supported", Toast.LENGTH_SHORT).show()
                                 } else if (!adapter.isEnabled) {

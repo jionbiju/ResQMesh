@@ -51,17 +51,12 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Pause
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
     val context = LocalContext.current
     val clientManager = remember { GattClientManager(context) }
-    
+
     var messageText by remember { mutableStateOf("") }
     var isSending by remember { mutableStateOf(false) }
     var showClearDialog by remember { mutableStateOf(false) }
@@ -80,7 +75,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
             try {
                 val outputFile = File(context.cacheDir, "voice_${System.currentTimeMillis()}.m4a")
                 audioFile = outputFile
-                
+
                 val sources = listOf(
                     MediaRecorder.AudioSource.MIC,
                     MediaRecorder.AudioSource.DEFAULT,
@@ -134,11 +129,19 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                 val file = audioFile
                 if (file != null && file.exists() && file.length() > 0) {
                     val audioBytes = file.readBytes()
+                    // 250 KB limit check restored with multiplication
                     if (audioBytes.size <= 250 * 1024) {
                         val base64Audio = Base64.encodeToString(audioBytes, Base64.NO_WRAP)
                         val voicePayload = "FILE_PAYLOAD|${file.name}|$base64Audio"
 
-                        val targetDestination = if (peerId == "BROADCAST") "BROADCAST" else if (peerName.isNotBlank() && peerName != "User") peerName else peerId
+                        val targetDestination = if (peerId == "BROADCAST") {
+                            "BROADCAST"
+                        } else if (peerName.isNotBlank() && peerName != "User" && peerName != "ResQmesh Node") {
+                            peerName
+                        } else {
+                            peerId
+                        }
+
                         val voiceMessage = ChatMessage(
                             messageId = UUID.randomUUID().toString(),
                             senderId = "ME",
@@ -194,27 +197,22 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
         }
     }
 
-    fun handleMicClick() {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            toggleAudioRecording()
-        } else {
-            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
-    }
-
     val allMessages by ChatRepository.allMessages.collectAsState()
     val messages = allMessages.filter { msg ->
         if (peerId == "BROADCAST") {
             msg.destinationId == "BROADCAST"
         } else {
+            val peerMatch = peerName.isNotBlank() && peerName != "User" && peerName != "ResQmesh Node"
             msg.destinationId != "BROADCAST" && (
-                (msg.isFromMe && (msg.destinationId == peerId || (peerName.isNotBlank() && msg.destinationId.equals(peerName, ignoreCase = true)))) ||
-                (!msg.isFromMe && (msg.senderId == peerId || msg.peerId == peerId || (peerName.isNotBlank() && msg.senderId.equals(peerName, ignoreCase = true))))
-            )
+                    // Messages sent by me
+                    (msg.isFromMe && (msg.destinationId.equals(peerId, ignoreCase = true) || (peerMatch && msg.destinationId.equals(peerName, ignoreCase = true)))) ||
+                            // Messages received from peer (1-hop or multi-hop)
+                            (!msg.isFromMe && (msg.senderId.equals(peerId, ignoreCase = true) || (peerMatch && msg.senderId.equals(peerName, ignoreCase = true))))
+                    )
         }
     }
 
-    // Crisis-Connect Style File Launcher
+    // File Launcher
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -249,7 +247,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                         isTransferring = true
                         transferProgress = 0.05f
                         clientManager.sendChatMessage(
-                            peerId, 
+                            peerId,
                             fileMessage,
                             onProgress = { p ->
                                 transferProgress = p
@@ -304,7 +302,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { 
+                title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(
                             modifier = Modifier.size(36.dp),
@@ -394,14 +392,20 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                     text = messageText,
                     onTextChange = { messageText = it },
                     onAttachClick = { filePickerLauncher.launch("*/*") },
-                    onMicClick = { toggleAudioRecording() },
+                    onMicClick = {
+                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                            toggleAudioRecording()
+                        } else {
+                            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
                     isRecordingAudio = isRecordingAudio,
                     onSendClick = {
                         if (messageText.isNotBlank() && !isSending) {
                             val msgToSend = messageText
                             messageText = ""
                             isSending = true
-                            
+
                             val targetDestination = if (peerId == "BROADCAST") {
                                 "BROADCAST"
                             } else if (peerName.isNotBlank() && peerName != "User" && peerName != "ResQmesh Node") {
@@ -479,21 +483,19 @@ fun ChatBubble(message: ChatMessage) {
     }
 
     val timeString = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(message.timestamp))
-
     val isFilePayload = remember(message.text) { message.text.startsWith("FILE_PAYLOAD|") }
 
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = alignment) {
         Column(horizontalAlignment = if (message.isFromMe) Alignment.End else Alignment.Start) {
             if (isFilePayload) {
-                // Crisis-Connect Interactive Attachment Card
                 val parts = message.text.split("|")
                 val fileName = parts.getOrNull(1) ?: "Attachment"
                 val base64Data = parts.getOrNull(2) ?: ""
 
-                val isAudioVoiceNote = fileName.endsWith(".m4a", true) || 
-                                       fileName.endsWith(".aac", true) || 
-                                       fileName.endsWith(".mp3", true) || 
-                                       fileName.startsWith("voice_")
+                val isAudioVoiceNote = fileName.endsWith(".m4a", true) ||
+                        fileName.endsWith(".aac", true) ||
+                        fileName.endsWith(".mp3", true) ||
+                        fileName.startsWith("voice_")
 
                 var isPlayingAudio by remember { mutableStateOf(false) }
                 var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
@@ -702,9 +704,9 @@ fun BottomMessageBar(
                     )
                 }
             }
-            
+
             Spacer(modifier = Modifier.width(8.dp))
-            
+
             FloatingActionButton(
                 onClick = onSendClick,
                 modifier = Modifier.size(48.dp),
@@ -719,11 +721,9 @@ fun BottomMessageBar(
     }
 }
 
-// Crisis-Connect Style Helper: Reads File Uri, Compresses Images, Encodes Base64 Wire Payload
 private fun processFileUri(context: Context, uri: Uri): String? {
     val contentResolver = context.contentResolver
-    
-    // Resolve Filename
+
     var fileName = "attachment"
     contentResolver.query(uri, null, null, null, null)?.use { cursor ->
         if (cursor.moveToFirst()) {
@@ -738,7 +738,6 @@ private fun processFileUri(context: Context, uri: Uri): String? {
     var rawBytes = inputStream.readBytes()
     inputStream.close()
 
-    // If file is an Image, downscale/compress aggressively for 5x faster BLE transmission
     val mimeType = contentResolver.getType(uri) ?: ""
     if (mimeType.startsWith("image") || fileName.endsWith(".jpg", true) || fileName.endsWith(".png", true)) {
         val bitmap = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size)
@@ -755,15 +754,15 @@ private fun processFileUri(context: Context, uri: Uri): String? {
         }
     }
 
+    // 250 KB check restored with multiplication
     if (rawBytes.size > 250 * 1024) {
-        return null // Exceeds BLE maximum capacity
+        return null
     }
 
     val base64Str = Base64.encodeToString(rawBytes, Base64.NO_WRAP)
     return "FILE_PAYLOAD|$fileName|$base64Str"
 }
 
-// Crisis-Connect Style Helper: Decodes Base64 into Public Downloads & Launches Viewer
 private fun saveAndOpenFile(context: Context, fileName: String, base64Data: String) {
     try {
         val rawBytes = Base64.decode(base64Data, Base64.DEFAULT)

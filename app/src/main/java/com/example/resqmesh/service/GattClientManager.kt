@@ -27,8 +27,8 @@ class GattClientManager(private val context: Context) {
     companion object {
         private const val HEADER_SIZE = 5 // "SOLO:", "STRT:", "DATA:", "DONE:"
         private const val PREFERRED_MTU = 247 // Crisis-Connect preferred MTU size
-        private const val CONNECTION_TIMEOUT_MS = 2500L // Fast 2.5-second timeout boundary
-        
+        private const val CONNECTION_TIMEOUT_MS = 4000L // 4-second timeout boundary for multi-hop stability
+
         // Serializes BLE transmission tasks across all manager instances
         private val queueMutex = Mutex()
     }
@@ -46,10 +46,19 @@ class GattClientManager(private val context: Context) {
     private fun resolveTargetAddress(deviceAddress: String, destinationId: String = ""): String {
         val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
 
-        val peerMatch = activePeers.firstOrNull { 
-            it.id == deviceAddress || 
-            it.name.equals(deviceAddress, ignoreCase = true) ||
-            (destinationId.isNotBlank() && destinationId != "BROADCAST" && destinationId != "ANNOUNCE" && it.name.equals(destinationId, ignoreCase = true))
+        // 1. If deviceAddress is already a known 1-Hop physical MAC, use it directly
+        val directByMac = activePeers.firstOrNull {
+            it.hops == 1 && it.id.equals(deviceAddress, ignoreCase = true) && BluetoothAdapter.checkBluetoothAddress(it.id)
+        }
+        if (directByMac != null) {
+            return directByMac.id
+        }
+
+        // 2. Match target peer by ID, Name, or Destination Name
+        val peerMatch = activePeers.firstOrNull {
+            it.id.equals(deviceAddress, ignoreCase = true) ||
+                    it.name.equals(deviceAddress, ignoreCase = true) ||
+                    (destinationId.isNotBlank() && destinationId != "BROADCAST" && destinationId != "ANNOUNCE" && it.name.equals(destinationId, ignoreCase = true))
         }
 
         if (peerMatch != null) {
@@ -58,12 +67,12 @@ class GattClientManager(private val context: Context) {
                 Log.d("GattClient", "Target '$destinationId' resolved to active 1H MAC '${peerMatch.id}'")
                 return peerMatch.id
             }
-            
+
             // Relayed 2-Hop peer: Route through 1H Relay neighbor's MAC
             if (peerMatch.hops > 1 && !peerMatch.relayedBy.isNullOrBlank()) {
-                val relayPeer = activePeers.firstOrNull { 
-                    (it.id == peerMatch.relayedBy || it.name.equals(peerMatch.relayedBy, ignoreCase = true)) &&
-                    it.hops == 1 && BluetoothAdapter.checkBluetoothAddress(it.id)
+                val relayPeer = activePeers.firstOrNull {
+                    (it.id.equals(peerMatch.relayedBy, ignoreCase = true) || it.name.equals(peerMatch.relayedBy, ignoreCase = true)) &&
+                            it.hops == 1 && BluetoothAdapter.checkBluetoothAddress(it.id)
                 }
                 if (relayPeer != null) {
                     Log.d("GattClient", "Target '$destinationId' (2H) routed via 1H Relay MAC '${relayPeer.id}'")
@@ -75,12 +84,12 @@ class GattClientManager(private val context: Context) {
             }
         }
 
-        // Direct Bluetooth MAC address if valid
+        // 3. Direct Bluetooth MAC address if valid
         if (BluetoothAdapter.checkBluetoothAddress(deviceAddress)) {
             return deviceAddress
         }
 
-        // Fallback to ANY active 1-Hop direct neighbor MAC
+        // 4. Fallback to ANY active 1-Hop direct neighbor MAC
         val direct1Hop = activePeers.firstOrNull { it.hops == 1 && BluetoothAdapter.checkBluetoothAddress(it.id) }?.id
         if (direct1Hop != null) {
             Log.d("GattClient", "Fallback: Routing via 1H direct neighbor MAC '$direct1Hop' for target '$deviceAddress'")
@@ -101,14 +110,18 @@ class GattClientManager(private val context: Context) {
         scope.launch {
             queueMutex.withLock {
                 val deferredResult = CompletableDeferred<Boolean>()
-                
+
                 mainHandler.post {
                     executeChatMessageSend(
                         deviceAddress = deviceAddress,
                         chatMessage = chatMessage,
                         attempt = attempt,
                         onProgress = onProgress,
-                        onCompleted = { success -> deferredResult.complete(success) }
+                        onCompleted = { success ->
+                            if (!deferredResult.isCompleted) {
+                                deferredResult.complete(success)
+                            }
+                        }
                     )
                 }
 
@@ -118,7 +131,7 @@ class GattClientManager(private val context: Context) {
                     Log.e("GattClient", "Fast timeout: Message transmission timed out to '$deviceAddress'")
                     false
                 }
-                
+
                 mainHandler.post { onResult(result) }
             }
         }
@@ -153,11 +166,13 @@ class GattClientManager(private val context: Context) {
         val encryptedText = cryptoHelper.encrypt(chatMessage.text, dummySecret)
 
         val storage = ResQStorage(context)
-        val myProfileName = runBlocking { storage.userName.first() } ?: "User"
+        val myProfileName = runBlocking { storage.userName.first() }
+            ?.takeIf { it.isNotBlank() && it != "User" }
+            ?: MeshManager.activeUserName
 
         // Wire payload transmits actual profile name in senderId for clean identity mapping
         val wireMessage = chatMessage.copy(
-            senderId = if (chatMessage.senderId == "ME") myProfileName else chatMessage.senderId,
+            senderId = if (chatMessage.senderId == "ME" || chatMessage.senderId.isBlank()) myProfileName else chatMessage.senderId,
             text = encryptedText,
             isFromMe = false
         )
@@ -187,10 +202,9 @@ class GattClientManager(private val context: Context) {
 
             override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
-                    // Crisis-Connect Optimization: Request High Connection Priority (7.5ms interval)
                     gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
                     refreshGattCache(gatt)
-                    
+
                     mainHandler.postDelayed({
                         val mtuOk = gatt?.requestMtu(PREFERRED_MTU) ?: false
                         if (!mtuOk) {
@@ -245,11 +259,11 @@ class GattClientManager(private val context: Context) {
             private fun sendNextChunk(gatt: BluetoothGatt?) {
                 val service = gatt?.getService(GattServerManager.SERVICE_UUID)
                 val char = service?.getCharacteristic(GattServerManager.MESSAGE_CHARACTERISTIC_UUID)
-                
+
                 if (char != null && currentOffset < jsonPayload.size) {
                     val endIdx = (currentOffset + negotiatedChunkSize).coerceAtMost(jsonPayload.size)
                     val chunkData = jsonPayload.sliceArray(currentOffset until endIdx)
-                    
+
                     val isFirst = currentOffset == 0
                     val isLast = endIdx >= jsonPayload.size
 
@@ -259,7 +273,7 @@ class GattClientManager(private val context: Context) {
                         isLast -> "DONE:"
                         else -> "DATA:"
                     }
-                    
+
                     @Suppress("DEPRECATION")
                     char.value = header.toByteArray(Charsets.UTF_8) + chunkData
                     char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
@@ -277,7 +291,7 @@ class GattClientManager(private val context: Context) {
                     if (status == BluetoothGatt.GATT_SUCCESS) {
                         val bytesWritten = (currentOffset + negotiatedChunkSize).coerceAtMost(jsonPayload.size) - currentOffset
                         currentOffset += if (bytesWritten > 0) bytesWritten else negotiatedChunkSize
-                        
+
                         val progress = (currentOffset.toFloat() / jsonPayload.size.toFloat()).coerceIn(0f, 1f)
                         onProgress(progress)
 
@@ -297,9 +311,9 @@ class GattClientManager(private val context: Context) {
 
     @SuppressLint("MissingPermission")
     fun sendMessage(
-        deviceAddress: String, 
-        messageText: String, 
-        isBroadcast: Boolean = false, 
+        deviceAddress: String,
+        messageText: String,
+        isBroadcast: Boolean = false,
         isEmergency: Boolean = false,
         onResult: (Boolean) -> Unit
     ) {
@@ -344,12 +358,16 @@ class GattClientManager(private val context: Context) {
                         deviceAddress = deviceAddress,
                         relayedMessage = relayedMessage,
                         attempt = attempt,
-                        onCompleted = { success -> deferredResult.complete(success) }
+                        onCompleted = { success ->
+                            if (!deferredResult.isCompleted) {
+                                deferredResult.complete(success)
+                            }
+                        }
                     )
                 }
 
                 val result = try {
-                    withTimeout(2000L) { deferredResult.await() }
+                    withTimeout(CONNECTION_TIMEOUT_MS) { deferredResult.await() }
                 } catch (e: TimeoutCancellationException) {
                     Log.e("GattClient", "Relay transmission timed out to '$deviceAddress'")
                     false
@@ -398,8 +416,7 @@ class GattClientManager(private val context: Context) {
                     gatt?.close()
                     onCompleted(success)
                     try {
-                        val storage = ResQStorage(context)
-                        val myName = runBlocking { storage.userName.first() } ?: "User"
+                        val myName = MeshManager.activeUserName
                         MeshManager.getAdvertiser()?.startAdvertising(myName)
                     } catch (e: Exception) {
                         Log.e("GattClient", "Error restarting advertiser: ${e.message}")
@@ -423,7 +440,7 @@ class GattClientManager(private val context: Context) {
                             gatt?.close()
                             mainHandler.postDelayed({
                                 executeRelayMessageSend(deviceAddress, relayedMessage, attempt + 1, onCompleted)
-                            }, 100)
+                            }, 150)
                         } else {
                             finishTransaction(false, gatt)
                         }
@@ -435,9 +452,9 @@ class GattClientManager(private val context: Context) {
 
             override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
                 if (status == BluetoothGatt.GATT_SUCCESS && mtu > 23) {
-                    negotiatedChunkSize = (mtu - 10).coerceAtMost(480)
+                    negotiatedChunkSize = (mtu - 3 - HEADER_SIZE).coerceAtMost(480)
                 } else {
-                    negotiatedChunkSize = 18
+                    negotiatedChunkSize = 15
                 }
                 mainHandler.postDelayed({ gatt?.discoverServices() }, 50)
             }
@@ -461,11 +478,11 @@ class GattClientManager(private val context: Context) {
             private fun sendNextChunk(gatt: BluetoothGatt?) {
                 val service = gatt?.getService(GattServerManager.SERVICE_UUID)
                 val char = service?.getCharacteristic(GattServerManager.MESSAGE_CHARACTERISTIC_UUID)
-                
+
                 if (char != null && currentOffset < jsonPayload.size) {
                     val endIdx = (currentOffset + negotiatedChunkSize).coerceAtMost(jsonPayload.size)
                     val chunkData = jsonPayload.sliceArray(currentOffset until endIdx)
-                    
+
                     val isFirst = currentOffset == 0
                     val isLast = endIdx >= jsonPayload.size
 
@@ -475,7 +492,7 @@ class GattClientManager(private val context: Context) {
                         isLast -> "DONE:"
                         else -> "DATA:"
                     }
-                    
+
                     @Suppress("DEPRECATION")
                     char.value = header.toByteArray(Charsets.UTF_8) + chunkData
                     char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT

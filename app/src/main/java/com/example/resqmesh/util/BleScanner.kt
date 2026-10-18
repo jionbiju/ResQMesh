@@ -4,17 +4,13 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
-import android.os.ParcelUuid
 import com.example.resqmesh.data.repository.ChatRepository
 import com.example.resqmesh.service.GattClientManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
 
 data class DiscoveredPeer(
     val id: String,
@@ -37,7 +33,7 @@ class BleScanner(private val context: Context) {
 
     fun addRelayedPeer(peerId: String, peerName: String, relayedByAddress: String) {
         if (peerId.isBlank() || peerId == "02:00:00:00:00:00" || peerId == "ME" || peerId == "BROADCAST" || peerId == relayedByAddress) return
-        
+
         // SELF-FILTER: Do NOT add local user to their own peer list!
         val myName = com.example.resqmesh.service.MeshManager.activeUserName
         if (myName.isNotBlank() && (peerId.equals(myName, ignoreCase = true) || peerName.equals(myName, ignoreCase = true))) {
@@ -45,10 +41,12 @@ class BleScanner(private val context: Context) {
         }
 
         val currentList = _foundPeers.value.toMutableList()
-        val existingIndex = currentList.indexOfFirst { 
-            it.id == peerId || it.name.equals(peerName, ignoreCase = true) || it.name.equals(peerId, ignoreCase = true) 
+        val existingIndex = currentList.indexOfFirst {
+            it.id.equals(peerId, ignoreCase = true) ||
+                    it.name.equals(peerName, ignoreCase = true) ||
+                    it.name.equals(peerId, ignoreCase = true)
         }
-        
+
         if (existingIndex == -1) {
             val relayedPeer = DiscoveredPeer(
                 id = peerId,
@@ -79,15 +77,32 @@ class BleScanner(private val context: Context) {
     fun updatePeerName(peerId: String, newName: String) {
         if (newName.isBlank() || newName == "User" || newName == "ResQmesh Node") return
         val currentList = _foundPeers.value.toMutableList()
-        val existingIndex = currentList.indexOfFirst { it.id == peerId }
+
+        // 1. Try matching by exact MAC or existing name
+        var existingIndex = currentList.indexOfFirst {
+            it.id.equals(peerId, ignoreCase = true) || it.name.equals(newName, ignoreCase = true)
+        }
+
+        // 2. Fallback: If GATT client RPA differs from Advertiser MAC, match an unnamed 1-hop peer
+        if (existingIndex == -1) {
+            val unnamed1HopIndices = currentList.indices.filter {
+                currentList[it].hops == 1 &&
+                        (currentList[it].name == "ResQmesh Node" || currentList[it].name == "User")
+            }
+            if (unnamed1HopIndices.size == 1) {
+                existingIndex = unnamed1HopIndices.first()
+            }
+        }
+
         if (existingIndex != -1) {
             val existing = currentList[existingIndex]
             currentList[existingIndex] = existing.copy(
                 name = newName,
+                hops = 1,
                 lastSeenTimestamp = System.currentTimeMillis()
             )
             _foundPeers.value = currentList
-            android.util.Log.d("BleScanner", "Updated peer $peerId name to: $newName")
+            android.util.Log.d("BleScanner", "Updated peer ${existing.id} name to: $newName")
         }
     }
 
@@ -96,12 +111,11 @@ class BleScanner(private val context: Context) {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val scanRecord = result.scanRecord
             val serviceUuids = scanRecord?.serviceUuids
-            
-            // Manual filter for our Service UUID
+
             if (serviceUuids?.any { it.uuid == BleAdvertiser.SERVICE_UUID } == true) {
                 val device = result.device
                 val peerName = scanRecord.deviceName ?: device.name ?: "ResQmesh Node"
-                
+
                 // Do NOT add local user to their own scanner list!
                 val myName = com.example.resqmesh.service.MeshManager.activeUserName
                 if (myName.isNotBlank() && peerName.equals(myName, ignoreCase = true)) {
@@ -109,15 +123,15 @@ class BleScanner(private val context: Context) {
                 }
 
                 val newPeer = DiscoveredPeer(device.address, peerName, result.rssi, lastSeenTimestamp = System.currentTimeMillis())
-                
+
                 val currentList = _foundPeers.value.toMutableList()
                 val hasRealName = peerName.isNotBlank() && peerName != "ResQmesh Node" && peerName != "User"
-                
+
                 // Deduplicate by MAC ID OR by Person Profile Name (handles Android MAC randomization)
-                val existingIndex = currentList.indexOfFirst { 
-                    it.id == newPeer.id || (hasRealName && it.name.equals(peerName, ignoreCase = true)) 
+                val existingIndex = currentList.indexOfFirst {
+                    it.id == newPeer.id || (hasRealName && it.name.equals(peerName, ignoreCase = true))
                 }
-                
+
                 if (existingIndex == -1) {
                     currentList.add(newPeer)
                     _foundPeers.value = currentList
@@ -126,10 +140,9 @@ class BleScanner(private val context: Context) {
                     // STORE-AND-FORWARD: Forward pending messages to newly discovered peer
                     forwardPendingMessagesToPeer(device.address)
                 } else {
-                    // Update MAC address (if rotated), Name, RSSI, and lastSeenTimestamp
                     val existing = currentList[existingIndex]
                     val updatedName = if (hasRealName) peerName else existing.name
-                    
+
                     currentList[existingIndex] = existing.copy(
                         id = newPeer.id,
                         name = updatedName,
@@ -150,7 +163,6 @@ class BleScanner(private val context: Context) {
     fun refreshPeers() {
         android.util.Log.d("BleScanner", "Refreshing active peers...")
         val now = System.currentTimeMillis()
-        // Prune peers older than 180 seconds (3 minutes)
         _foundPeers.value = _foundPeers.value.filter { (now - it.lastSeenTimestamp) < 180_000 }
         stopScan()
         startScan()
@@ -167,7 +179,7 @@ class BleScanner(private val context: Context) {
                 if (!forwardedMessageIds.contains(key)) {
                     forwardedMessageIds.add(key)
                     android.util.Log.d("BleScanner", "Store-and-Forward: Forwarding pending message '${msg.messageId}' to $peerAddress")
-                    val forwardMsg = msg.copy(ttl = msg.ttl - 1)
+                    val forwardMsg = msg.copy(ttl = (msg.ttl - 1).coerceAtLeast(1))
                     clientManager.relayMeshMessage(peerAddress, forwardMsg)
                 }
             }
@@ -186,7 +198,7 @@ class BleScanner(private val context: Context) {
         if (bluetoothAdapter?.isEnabled == true) {
             // Keep existing 2-hop relayed peers when refreshing 1-hop scan
             _foundPeers.value = _foundPeers.value.filter { it.hops > 1 }
-            
+
             val settings = ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
@@ -194,7 +206,6 @@ class BleScanner(private val context: Context) {
                 .build()
 
             try {
-                // Scanning without filter and filtering manually in onScanResult for maximum compatibility
                 scanner.startScan(null, settings, scanCallback)
                 android.util.Log.d("BleScanner", "Scan started successfully (no-filter mode)")
             } catch (e: Exception) {
