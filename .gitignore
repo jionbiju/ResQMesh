@@ -22,3 +22,10 @@ local.properties
 *.txt
 .kotlin
 .idea/
+
+# Arduino / Firmware Build Artifacts
+firmware/**/build/
+firmware/**/out/
+*.bin
+*.elf
+*.hex
