@@ -18,12 +18,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.*
 
 /**
- * Singleton manager to persist Mesh Network state across screens.
+ * Singleton manager to persist Mesh & LoRa Network state across screens.
  */
 object MeshManager {
     private var bleScanner: BleScanner? = null
     private var bleAdvertiser: BleAdvertiser? = null
     private var gattServer: GattServerManager? = null
+    private var loraManager: LoraManager? = null
 
     var activeUserName: String = "User"
 
@@ -31,19 +32,23 @@ object MeshManager {
     val isMeshActive = _isMeshActive.asStateFlow()
 
     fun init(context: Context) {
+        val appCtx = context.applicationContext
         if (bleScanner == null) {
-            val appTile = context.applicationContext
-            bleScanner = BleScanner(appTile)
-            bleAdvertiser = BleAdvertiser(appTile)
-            gattServer = GattServerManager(appTile)
+            bleScanner = BleScanner(appCtx)
+            bleAdvertiser = BleAdvertiser(appCtx)
+            gattServer = GattServerManager(appCtx)
+        }
+        if (loraManager == null) {
+            loraManager = LoraManager(appCtx)
         }
     }
 
-    fun isInitialized(): Boolean = bleScanner != null
+    fun isInitialized(): Boolean = loraManager != null || bleScanner != null
 
     fun getScanner() = bleScanner
     fun getAdvertiser() = bleAdvertiser
     fun getGattServer() = gattServer
+    fun getLoraManager(): LoraManager? = loraManager
 
     fun setMeshActiveState(active: Boolean) {
         _isMeshActive.value = active
@@ -63,7 +68,7 @@ object MeshManager {
 }
 
 /**
- * Persistent Foreground Relay Service ensuring BLE Mesh stays alive in the background.
+ * Persistent Foreground Relay & LoRa Service ensuring ResQmesh stays alive in the background.
  */
 class MeshService : Service() {
 
@@ -124,7 +129,7 @@ class MeshService : Service() {
 
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("ResQmesh Active")
-            .setContentText("Relaying offline emergency signals in background")
+            .setContentText("Connected to ESP32 LoRa radio & mesh in background")
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
@@ -141,9 +146,10 @@ class MeshService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        // Initialize and start BLE Mesh hardware engines
+        // Initialize and start BLE & LoRa hardware engines
         MeshManager.activeUserName = userName
         MeshManager.init(applicationContext)
+        MeshManager.getLoraManager()?.startConnectingToLoraNode()
         MeshManager.getScanner()?.startScan()
         MeshManager.getAdvertiser()?.startAdvertising(userName)
         MeshManager.getGattServer()?.startServer()
@@ -151,6 +157,7 @@ class MeshService : Service() {
     }
 
     private fun stopForegroundMesh() {
+        MeshManager.getLoraManager()?.disconnect()
         MeshManager.getScanner()?.stopScan()
         MeshManager.getAdvertiser()?.stopAdvertising()
         MeshManager.getGattServer()?.stopServer()
@@ -174,10 +181,10 @@ class MeshService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "ResQmesh Mesh Relay",
+                "ResQmesh Service",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Maintains background BLE Mesh relay service for disaster messaging"
+                description = "Maintains background LoRa & BLE connectivity for disaster messaging"
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)

@@ -131,6 +131,12 @@ fun SOSScreen(onBackClick: () -> Unit) {
                     }
 
                     val sosPayload = "🚨 CRITICAL SOS: Medical Help Needed! $locationText"
+                    val loraManager = MeshManager.getLoraManager()
+                    val loraSent = loraManager?.sendLoraMessage(
+                        text = sosPayload,
+                        destinationId = "BROADCAST",
+                        isEmergency = true
+                    ) ?: false
 
                     if (peers.isNotEmpty()) {
                         isBroadcasting = true
@@ -139,7 +145,10 @@ fun SOSScreen(onBackClick: () -> Unit) {
                             sosPayload,
                             isEmergency = true
                         )
-                        Toast.makeText(context, "SOS Broadcast with GPS sent to ${peers.size} nodes", Toast.LENGTH_LONG).show()
+                    }
+
+                    if (loraSent || peers.isNotEmpty()) {
+                        Toast.makeText(context, "🚨 SOS Emergency Broadcast Sent!", Toast.LENGTH_LONG).show()
                     } else {
                         Toast.makeText(context, "Saved SOS Broadcast ($locationText)", Toast.LENGTH_LONG).show()
                     }

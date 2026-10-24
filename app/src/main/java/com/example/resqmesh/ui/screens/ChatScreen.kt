@@ -44,7 +44,7 @@ import com.example.resqmesh.data.repository.ChatRepository
 import com.example.resqmesh.domain.models.ChatMessage
 import com.example.resqmesh.service.GattClientManager
 import com.example.resqmesh.service.MeshManager
-import com.example.resqmesh.ui.theme.ResQmeshTheme
+import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -69,7 +69,23 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
     var mediaRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var audioFile by remember { mutableStateOf<File?>(null) }
 
-    // Function to Start or Stop Audio Recording
+    val scannerFlow = remember { MeshManager.getScanner()?.foundPeers ?: MutableStateFlow(emptyList()) }
+    val discoveredPeers by scannerFlow.collectAsState()
+
+    val isLoraConnected by (MeshManager.getLoraManager()?.isConnectedToLoraNode ?: MutableStateFlow(false)).collectAsState()
+
+    val livePeerName = remember(discoveredPeers, peerId, peerName) {
+        val found = discoveredPeers.firstOrNull {
+            it.id.equals(peerId, ignoreCase = true) ||
+                    (peerName.isNotBlank() && peerName != "User" && peerName != "ResQmesh Node" && it.name.equals(peerName, ignoreCase = true))
+        }
+        if (found != null && found.name.isNotBlank() && found.name != "ResQmesh Node" && found.name != "User") {
+            found.name
+        } else {
+            peerName
+        }
+    }
+
     fun toggleAudioRecording() {
         if (!isRecordingAudio) {
             try {
@@ -129,15 +145,14 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                 val file = audioFile
                 if (file != null && file.exists() && file.length() > 0) {
                     val audioBytes = file.readBytes()
-                    // 250 KB limit check restored with multiplication
                     if (audioBytes.size <= 250 * 1024) {
                         val base64Audio = Base64.encodeToString(audioBytes, Base64.NO_WRAP)
                         val voicePayload = "FILE_PAYLOAD|${file.name}|$base64Audio"
 
                         val targetDestination = if (peerId == "BROADCAST") {
                             "BROADCAST"
-                        } else if (peerName.isNotBlank() && peerName != "User" && peerName != "ResQmesh Node") {
-                            peerName
+                        } else if (livePeerName.isNotBlank() && livePeerName != "User" && livePeerName != "ResQmesh Node") {
+                            livePeerName
                         } else {
                             peerId
                         }
@@ -154,7 +169,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                         ChatRepository.addMessage(voiceMessage)
 
                         if (peerId == "BROADCAST") {
-                            val activePeers = MeshManager.getScanner()?.foundPeers?.value?.map { it.id } ?: emptyList()
+                            val activePeers = MeshManager.getScanner()?.foundPeers?.value?.filter { it.hops == 1 }?.map { it.id } ?: emptyList()
                             clientManager.broadcastToAll(activePeers, voicePayload, isEmergency = false)
                         } else {
                             isTransferring = true
@@ -202,17 +217,23 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
         if (peerId == "BROADCAST") {
             msg.destinationId == "BROADCAST"
         } else {
-            val peerMatch = peerName.isNotBlank() && peerName != "User" && peerName != "ResQmesh Node"
+            val hasValidName = livePeerName.isNotBlank() && livePeerName != "User" && livePeerName != "ResQmesh Node"
             msg.destinationId != "BROADCAST" && (
-                    // Messages sent by me
-                    (msg.isFromMe && (msg.destinationId.equals(peerId, ignoreCase = true) || (peerMatch && msg.destinationId.equals(peerName, ignoreCase = true)))) ||
-                            // Messages received from peer (1-hop or multi-hop)
-                            (!msg.isFromMe && (msg.senderId.equals(peerId, ignoreCase = true) || (peerMatch && msg.senderId.equals(peerName, ignoreCase = true))))
+                    (msg.isFromMe && (
+                            msg.destinationId.equals(peerId, ignoreCase = true) ||
+                                    msg.destinationId.equals(peerName, ignoreCase = true) ||
+                                    (hasValidName && msg.destinationId.equals(livePeerName, ignoreCase = true))
+                            )) ||
+                            (!msg.isFromMe && (
+                                    msg.senderId.equals(peerId, ignoreCase = true) ||
+                                            msg.senderId.equals(peerName, ignoreCase = true) ||
+                                            (hasValidName && msg.senderId.equals(livePeerName, ignoreCase = true)) ||
+                                            (!hasValidName && discoveredPeers.size <= 1)
+                                    ))
                     )
         }
     }
 
-    // File Launcher
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -221,8 +242,8 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                 Toast.makeText(context, "Preparing file attachment...", Toast.LENGTH_SHORT).show()
                 val targetDestination = if (peerId == "BROADCAST") {
                     "BROADCAST"
-                } else if (peerName.isNotBlank() && peerName != "User" && peerName != "ResQmesh Node") {
-                    peerName
+                } else if (livePeerName.isNotBlank() && livePeerName != "User" && livePeerName != "ResQmesh Node") {
+                    livePeerName
                 } else {
                     peerId
                 }
@@ -241,7 +262,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                     ChatRepository.addMessage(fileMessage)
 
                     if (peerId == "BROADCAST") {
-                        val activePeers = MeshManager.getScanner()?.foundPeers?.value?.map { it.id } ?: emptyList()
+                        val activePeers = MeshManager.getScanner()?.foundPeers?.value?.filter { it.hops == 1 }?.map { it.id } ?: emptyList()
                         clientManager.broadcastToAll(activePeers, processedPayload, isEmergency = false)
                     } else {
                         isTransferring = true
@@ -278,7 +299,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
         AlertDialog(
             onDismissRequest = { showClearDialog = false },
             title = { Text("Clear Chat History", fontWeight = FontWeight.Bold) },
-            text = { Text("Are you sure you want to clear all messages with $peerName?") },
+            text = { Text("Are you sure you want to clear all messages with $livePeerName?") },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -311,7 +332,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Text(
-                                    text = peerName.take(1).uppercase(),
+                                    text = livePeerName.take(1).uppercase(),
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary,
                                     fontSize = 16.sp
@@ -320,11 +341,15 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            Text(peerName, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                            Text(livePeerName, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF4CAF50)))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Mesh Secured", fontSize = 10.sp, color = Color(0xFF4CAF50))
+                                Text(
+                                    text = if (isLoraConnected) "LoRa 433MHz + BLE Secured" else "Mesh Secured",
+                                    fontSize = 10.sp,
+                                    color = Color(0xFF4CAF50)
+                                )
                             }
                         }
                     }
@@ -408,14 +433,15 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
 
                             val targetDestination = if (peerId == "BROADCAST") {
                                 "BROADCAST"
-                            } else if (peerName.isNotBlank() && peerName != "User" && peerName != "ResQmesh Node") {
-                                peerName
+                            } else if (livePeerName.isNotBlank() && livePeerName != "User" && livePeerName != "ResQmesh Node") {
+                                livePeerName
                             } else {
                                 peerId
                             }
 
+                            val shortId = UUID.randomUUID().toString().take(8)
                             val outgoingMessage = ChatMessage(
-                                messageId = UUID.randomUUID().toString(),
+                                messageId = shortId,
                                 senderId = "ME",
                                 destinationId = targetDestination,
                                 text = msgToSend,
@@ -423,20 +449,40 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                                 timestamp = System.currentTimeMillis(),
                                 ttl = 3
                             )
+                            // Added ONCE to ChatRepository (no duplicate bubble!)
                             ChatRepository.addMessage(outgoingMessage)
 
+                            // 1. Transmit over ESP32 LoRa if connected
+                            val loraManager = MeshManager.getLoraManager()
+                            val loraSent = loraManager?.sendLoraMessage(
+                                text = msgToSend,
+                                destinationId = targetDestination,
+                                isEmergency = false,
+                                existingMessageId = shortId
+                            ) ?: false
+
+                            // 2. Also transmit over local BLE if peer is nearby or Broadcast
                             if (peerId == "BROADCAST") {
-                                val activePeers = MeshManager.getScanner()?.foundPeers?.value?.map { it.id } ?: emptyList()
+                                val activePeers = MeshManager.getScanner()?.foundPeers?.value?.filter { it.hops == 1 }?.map { it.id } ?: emptyList()
                                 clientManager.broadcastToAll(activePeers, msgToSend, isEmergency = false)
                                 isSending = false
                             } else {
-                                clientManager.sendChatMessage(peerId, outgoingMessage) { success ->
+                                val isLoraOnlyPeer = discoveredPeers.firstOrNull {
+                                    it.id.equals(peerId, ignoreCase = true) || it.name.equals(livePeerName, ignoreCase = true)
+                                }?.relayedBy == "LoRa-433MHz"
+
+                                if (loraSent && isLoraOnlyPeer) {
                                     isSending = false
-                                    if (!success) {
-                                        ChatRepository.markMessagePending(outgoingMessage)
-                                        Toast.makeText(context, "Stored in Mesh Queue (Will auto-deliver when peer connects)", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        ChatRepository.markMessageDelivered(outgoingMessage.messageId)
+                                    ChatRepository.markMessageDelivered(outgoingMessage.messageId)
+                                } else {
+                                    clientManager.sendChatMessage(peerId, outgoingMessage) { bleSuccess ->
+                                        isSending = false
+                                        if (bleSuccess || loraSent) {
+                                            ChatRepository.markMessageDelivered(outgoingMessage.messageId)
+                                        } else {
+                                            ChatRepository.markMessagePending(outgoingMessage)
+                                            Toast.makeText(context, "Stored in Mesh Queue (Will auto-deliver when peer connects)", Toast.LENGTH_SHORT).show()
+                                        }
                                     }
                                 }
                             }
@@ -754,7 +800,6 @@ private fun processFileUri(context: Context, uri: Uri): String? {
         }
     }
 
-    // 250 KB check restored with multiplication
     if (rawBytes.size > 250 * 1024) {
         return null
     }
