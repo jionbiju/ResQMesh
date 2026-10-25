@@ -30,6 +30,7 @@ class LoraManager(private val context: Context) {
     private var connectedGatt: BluetoothGatt? = null
     private var rxCharacteristic: BluetoothGattCharacteristic? = null
     private var isScanning = false
+    private var loraHeartbeatJob: Job? = null
 
     private val _isConnectedToLoraNode = MutableStateFlow(false)
     val isConnectedToLoraNode = _isConnectedToLoraNode.asStateFlow()
@@ -121,7 +122,6 @@ class LoraManager(private val context: Context) {
                     Log.d("LoraManager", "Connected to $nodeName via BLE! Requesting MTU 512...")
                     gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
 
-                    // CRITICAL: Request large MTU so JSON packets (>20 bytes) are not truncated!
                     mainHandler.postDelayed({
                         val mtuRequested = gatt?.requestMtu(512) ?: false
                         if (!mtuRequested) {
@@ -131,6 +131,7 @@ class LoraManager(private val context: Context) {
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
                     _isConnectedToLoraNode.value = false
                     rxCharacteristic = null
+                    loraHeartbeatJob?.cancel()
                     _connectedNodeName.value = "Disconnected. Retrying..."
                     try { gatt?.close() } catch (_: Exception) {}
                     connectedGatt = null
@@ -163,6 +164,7 @@ class LoraManager(private val context: Context) {
                         gatt.writeDescriptor(descriptor)
                     }
                     Log.d("LoraManager", "LoRa TX Notification enabled successfully.")
+                    startLoraHeartbeat()
                 }
             }
 
@@ -188,6 +190,24 @@ class LoraManager(private val context: Context) {
         }, BluetoothDevice.TRANSPORT_LE)
     }
 
+    private fun startLoraHeartbeat() {
+        loraHeartbeatJob?.cancel()
+        loraHeartbeatJob = scope.launch {
+            delay(2000)
+            while (isActive && _isConnectedToLoraNode.value) {
+                val myName = MeshManager.activeUserName
+                if (myName.isNotBlank() && myName != "User") {
+                    sendLoraMessage(
+                        text = "ANNOUNCE",
+                        destinationId = "ANNOUNCE",
+                        isEmergency = false
+                    )
+                }
+                delay((25000L..32000L).random())
+            }
+        }
+    }
+
     private fun processIncomingLoraPacket(jsonPayload: String) {
         scope.launch {
             try {
@@ -211,6 +231,11 @@ class LoraManager(private val context: Context) {
                         peerName = message.senderId,
                         relayedByAddress = "LoRa-433MHz"
                     )
+                }
+
+                // Stop here if this was just a LoRa discovery heartbeat ping!
+                if (message.destinationId == "ANNOUNCE" || decryptedText == "ANNOUNCE") {
+                    return@launch
                 }
 
                 val isIntendedForMe = message.destinationId == "BROADCAST" ||
@@ -293,6 +318,8 @@ class LoraManager(private val context: Context) {
     @SuppressLint("MissingPermission")
     fun disconnect() {
         stopLoraScan()
+        loraHeartbeatJob?.cancel()
+        loraHeartbeatJob = null
         try {
             connectedGatt?.disconnect()
             connectedGatt?.close()

@@ -21,6 +21,7 @@ data class DiscoveredPeer(
     val lastSeenTimestamp: Long = System.currentTimeMillis()
 ) {
     val isOnline: Boolean get() = (System.currentTimeMillis() - lastSeenTimestamp) < 180_000
+    val isDirectBle: Boolean get() = hops == 1 && relayedBy != "LoRa-433MHz"
 }
 
 class BleScanner(private val context: Context) {
@@ -52,25 +53,27 @@ class BleScanner(private val context: Context) {
                 id = peerId,
                 name = peerName,
                 rssi = -85,
-                hops = 2,
+                hops = if (relayedByAddress == "LoRa-433MHz") 1 else 2,
                 relayedBy = relayedByAddress,
                 lastSeenTimestamp = System.currentTimeMillis()
             )
             currentList.add(relayedPeer)
             _foundPeers.value = currentList
-            android.util.Log.d("BleScanner", "Discovered Relayed Peer (2 Hops): $peerName ($peerId) via $relayedByAddress")
+            android.util.Log.d("BleScanner", "Discovered Peer via $relayedByAddress: $peerName ($peerId)")
         } else {
             val existing = currentList[existingIndex]
-            if (existing.hops > 1) {
+            // CONFLICT RULE: If peer is ALREADY in active BLE range (relayedBy != "LoRa-433MHz"), ignore LoRa tag
+            if (relayedByAddress == "LoRa-433MHz" && existing.hops == 1 && existing.relayedBy != "LoRa-433MHz") {
+                currentList[existingIndex] = existing.copy(lastSeenTimestamp = System.currentTimeMillis())
+            } else if (existing.hops > 1 || existing.relayedBy == "LoRa-433MHz") {
                 currentList[existingIndex] = existing.copy(
                     relayedBy = relayedByAddress,
                     lastSeenTimestamp = System.currentTimeMillis()
                 )
-                _foundPeers.value = currentList
             } else {
                 currentList[existingIndex] = existing.copy(lastSeenTimestamp = System.currentTimeMillis())
-                _foundPeers.value = currentList
             }
+            _foundPeers.value = currentList
         }
     }
 
@@ -99,6 +102,7 @@ class BleScanner(private val context: Context) {
             currentList[existingIndex] = existing.copy(
                 name = newName,
                 hops = 1,
+                relayedBy = null,
                 lastSeenTimestamp = System.currentTimeMillis()
             )
             _foundPeers.value = currentList
@@ -143,11 +147,13 @@ class BleScanner(private val context: Context) {
                     val existing = currentList[existingIndex]
                     val updatedName = if (hasRealName) peerName else existing.name
 
+                    // PROMOTION (LoRa -> BLE): Overwrite relayedBy to null and hops = 1 so peer moves up to BLE Section
                     currentList[existingIndex] = existing.copy(
                         id = newPeer.id,
                         name = updatedName,
                         rssi = result.rssi,
                         hops = 1,
+                        relayedBy = null,
                         lastSeenTimestamp = System.currentTimeMillis()
                     )
                     _foundPeers.value = currentList
@@ -196,8 +202,8 @@ class BleScanner(private val context: Context) {
         }
 
         if (bluetoothAdapter?.isEnabled == true) {
-            // Keep existing 2-hop relayed peers when refreshing 1-hop scan
-            _foundPeers.value = _foundPeers.value.filter { it.hops > 1 }
+            // Keep existing 2-hop relayed or LoRa peers when refreshing 1-hop scan
+            _foundPeers.value = _foundPeers.value.filter { it.hops > 1 || it.relayedBy == "LoRa-433MHz" }
 
             val settings = ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)

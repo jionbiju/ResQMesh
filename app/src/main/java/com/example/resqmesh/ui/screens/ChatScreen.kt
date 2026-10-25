@@ -86,6 +86,23 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
         }
     }
 
+    val currentPeerObj = remember(discoveredPeers, peerId, livePeerName) {
+        discoveredPeers.firstOrNull {
+            (it.id.equals(peerId, ignoreCase = true) || it.name.equals(livePeerName, ignoreCase = true)) &&
+                    it.relayedBy != "LoRa-433MHz"
+        } ?: discoveredPeers.firstOrNull {
+            it.id.equals(peerId, ignoreCase = true) || it.name.equals(livePeerName, ignoreCase = true)
+        }
+    }
+
+    val isBleReachable = remember(currentPeerObj, peerId) {
+        peerId == "BROADCAST" || (currentPeerObj != null && currentPeerObj.relayedBy != "LoRa-433MHz")
+    }
+
+    val isLoraOnlyMode = remember(isBleReachable, isLoraConnected, peerId) {
+        peerId != "BROADCAST" && !isBleReachable && isLoraConnected
+    }
+
     fun toggleAudioRecording() {
         if (!isRecordingAudio) {
             try {
@@ -158,7 +175,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                         }
 
                         val voiceMessage = ChatMessage(
-                            messageId = UUID.randomUUID().toString(),
+                            messageId = UUID.randomUUID().toString().take(8),
                             senderId = "ME",
                             destinationId = targetDestination,
                             text = voicePayload,
@@ -217,19 +234,10 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
         if (peerId == "BROADCAST") {
             msg.destinationId == "BROADCAST"
         } else {
-            val hasValidName = livePeerName.isNotBlank() && livePeerName != "User" && livePeerName != "ResQmesh Node"
+            val peerMatch = livePeerName.isNotBlank() && livePeerName != "User" && livePeerName != "ResQmesh Node"
             msg.destinationId != "BROADCAST" && (
-                    (msg.isFromMe && (
-                            msg.destinationId.equals(peerId, ignoreCase = true) ||
-                                    msg.destinationId.equals(peerName, ignoreCase = true) ||
-                                    (hasValidName && msg.destinationId.equals(livePeerName, ignoreCase = true))
-                            )) ||
-                            (!msg.isFromMe && (
-                                    msg.senderId.equals(peerId, ignoreCase = true) ||
-                                            msg.senderId.equals(peerName, ignoreCase = true) ||
-                                            (hasValidName && msg.senderId.equals(livePeerName, ignoreCase = true)) ||
-                                            (!hasValidName && discoveredPeers.size <= 1)
-                                    ))
+                    (msg.isFromMe && (msg.destinationId.equals(peerId, ignoreCase = true) || (peerMatch && msg.destinationId.equals(livePeerName, ignoreCase = true)))) ||
+                            (!msg.isFromMe && (msg.senderId.equals(peerId, ignoreCase = true) || (peerMatch && msg.senderId.equals(livePeerName, ignoreCase = true))))
                     )
         }
     }
@@ -251,7 +259,7 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                 val processedPayload = processFileUri(context, uri)
                 if (processedPayload != null) {
                     val fileMessage = ChatMessage(
-                        messageId = UUID.randomUUID().toString(),
+                        messageId = UUID.randomUUID().toString().take(8),
                         senderId = "ME",
                         destinationId = targetDestination,
                         text = processedPayload,
@@ -343,12 +351,17 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                         Column {
                             Text(livePeerName, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(Color(0xFF4CAF50)))
+                                val badgeColor = if (isLoraOnlyMode) Color(0xFFFF9800) else Color(0xFF4CAF50)
+                                Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(badgeColor))
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = if (isLoraConnected) "LoRa 433MHz + BLE Secured" else "Mesh Secured",
+                                    text = when {
+                                        isLoraOnlyMode -> "LoRa 433MHz Long-Range (Text Only)"
+                                        isBleReachable -> "BLE Nearby Direct (Files & Voice Enabled)"
+                                        else -> "Offline Mesh Queue"
+                                    },
                                     fontSize = 10.sp,
-                                    color = Color(0xFF4CAF50)
+                                    color = badgeColor
                                 )
                             }
                         }
@@ -416,6 +429,14 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                 BottomMessageBar(
                     text = messageText,
                     onTextChange = { messageText = it },
+                    isMediaEnabled = !isLoraOnlyMode,
+                    onDisabledMediaClick = {
+                        Toast.makeText(
+                            context,
+                            "File & Voice Notes are disabled over LoRa 433MHz (250B packet limit). Move within BLE range.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    },
                     onAttachClick = { filePickerLauncher.launch("*/*") },
                     onMicClick = {
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
@@ -449,41 +470,56 @@ fun ChatScreen(peerId: String, peerName: String, onBackClick: () -> Unit) {
                                 timestamp = System.currentTimeMillis(),
                                 ttl = 3
                             )
-                            // Added ONCE to ChatRepository (no duplicate bubble!)
                             ChatRepository.addMessage(outgoingMessage)
 
-                            // 1. Transmit over ESP32 LoRa if connected
-                            val loraManager = MeshManager.getLoraManager()
-                            val loraSent = loraManager?.sendLoraMessage(
-                                text = msgToSend,
-                                destinationId = targetDestination,
-                                isEmergency = false,
-                                existingMessageId = shortId
-                            ) ?: false
-
-                            // 2. Also transmit over local BLE if peer is nearby or Broadcast
                             if (peerId == "BROADCAST") {
-                                val activePeers = MeshManager.getScanner()?.foundPeers?.value?.filter { it.hops == 1 }?.map { it.id } ?: emptyList()
-                                clientManager.broadcastToAll(activePeers, msgToSend, isEmergency = false)
-                                isSending = false
-                            } else {
-                                val isLoraOnlyPeer = discoveredPeers.firstOrNull {
-                                    it.id.equals(peerId, ignoreCase = true) || it.name.equals(livePeerName, ignoreCase = true)
-                                }?.relayedBy == "LoRa-433MHz"
+                                val activeBlePeers = MeshManager.getScanner()?.foundPeers?.value
+                                    ?.filter { it.hops == 1 && it.relayedBy != "LoRa-433MHz" }
+                                    ?.map { it.id } ?: emptyList()
 
-                                if (loraSent && isLoraOnlyPeer) {
+                                clientManager.broadcastToAll(activeBlePeers, msgToSend, isEmergency = false)
+                                MeshManager.getLoraManager()?.sendLoraMessage(
+                                    text = msgToSend,
+                                    destinationId = "BROADCAST",
+                                    isEmergency = false,
+                                    existingMessageId = shortId
+                                )
+                                isSending = false
+                            } else if (isBleReachable) {
+                                clientManager.sendChatMessage(peerId, outgoingMessage) { bleSuccess ->
                                     isSending = false
-                                    ChatRepository.markMessageDelivered(outgoingMessage.messageId)
-                                } else {
-                                    clientManager.sendChatMessage(peerId, outgoingMessage) { bleSuccess ->
-                                        isSending = false
-                                        if (bleSuccess || loraSent) {
+                                    if (bleSuccess) {
+                                        ChatRepository.markMessageDelivered(outgoingMessage.messageId)
+                                    } else {
+                                        val loraFallback = MeshManager.getLoraManager()?.sendLoraMessage(
+                                            text = msgToSend,
+                                            destinationId = targetDestination,
+                                            isEmergency = false,
+                                            existingMessageId = shortId
+                                        ) ?: false
+                                        if (loraFallback) {
                                             ChatRepository.markMessageDelivered(outgoingMessage.messageId)
+                                            Toast.makeText(context, "BLE out of range. Routed via LoRa 433MHz!", Toast.LENGTH_SHORT).show()
                                         } else {
                                             ChatRepository.markMessagePending(outgoingMessage)
-                                            Toast.makeText(context, "Stored in Mesh Queue (Will auto-deliver when peer connects)", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "Stored in Mesh Queue", Toast.LENGTH_SHORT).show()
                                         }
                                     }
+                                }
+                            } else {
+                                val loraSent = MeshManager.getLoraManager()?.sendLoraMessage(
+                                    text = msgToSend,
+                                    destinationId = targetDestination,
+                                    isEmergency = false,
+                                    existingMessageId = shortId
+                                ) ?: false
+
+                                isSending = false
+                                if (loraSent) {
+                                    ChatRepository.markMessageDelivered(outgoingMessage.messageId)
+                                } else {
+                                    ChatRepository.markMessagePending(outgoingMessage)
+                                    Toast.makeText(context, "LoRa Node busy/disconnected. Stored in Queue.", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }
@@ -677,6 +713,8 @@ fun ChatBubble(message: ChatMessage) {
 fun BottomMessageBar(
     text: String,
     onTextChange: (String) -> Unit,
+    isMediaEnabled: Boolean = true,
+    onDisabledMediaClick: () -> Unit = {},
     onAttachClick: () -> Unit,
     onMicClick: () -> Unit,
     isRecordingAudio: Boolean,
@@ -694,19 +732,23 @@ fun BottomMessageBar(
                 .imePadding(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onAttachClick) {
+            IconButton(onClick = { if (isMediaEnabled) onAttachClick() else onDisabledMediaClick() }) {
                 Icon(
                     Icons.Default.AttachFile,
                     contentDescription = "Attach File",
-                    tint = MaterialTheme.colorScheme.primary
+                    tint = if (isMediaEnabled) MaterialTheme.colorScheme.primary else Color.Gray.copy(alpha = 0.4f)
                 )
             }
 
-            IconButton(onClick = onMicClick) {
+            IconButton(onClick = { if (isMediaEnabled) onMicClick() else onDisabledMediaClick() }) {
                 Icon(
                     imageVector = if (isRecordingAudio) Icons.Default.Stop else Icons.Default.Mic,
                     contentDescription = "Voice Note",
-                    tint = if (isRecordingAudio) Color.Red else MaterialTheme.colorScheme.primary
+                    tint = when {
+                        !isMediaEnabled -> Color.Gray.copy(alpha = 0.4f)
+                        isRecordingAudio -> Color.Red
+                        else -> MaterialTheme.colorScheme.primary
+                    }
                 )
             }
 

@@ -20,7 +20,7 @@ class GattServerManager(private val context: Context) {
     private val gson = Gson()
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    // Thread-safe map for per-device reassembly buffers (Prevents multi-device chunk corruption)
+    // Thread-safe map for per-device reassembly buffers
     private val deviceBuffers = ConcurrentHashMap<String, StringBuilder>()
 
     companion object {
@@ -100,7 +100,6 @@ class GattServerManager(private val context: Context) {
                 val dummySecret = "ResQmeshSecretKey123456789012345".toByteArray()
                 val decryptedText = cryptoHelper.decrypt(meshMessage.text, dummySecret) ?: "[Encrypted]"
 
-                // Determine real original sender identity (Profile Name / Static ID)
                 val finalSenderId = if (meshMessage.senderId.isNotBlank() &&
                     meshMessage.senderId != "02:00:00:00:00:00" &&
                     meshMessage.senderId != "ME"
@@ -110,47 +109,11 @@ class GattServerManager(private val context: Context) {
                     deviceAddress
                 }
 
-                // Identify the immediate 1-hop neighbor that forwarded this packet
-                val hopSenderName = if (!meshMessage.via.isNullOrBlank()) {
-                    meshMessage.via!!
-                } else {
-                    finalSenderId
-                }
+                // Update direct neighbor's name
+                MeshManager.getScanner()?.updatePeerName(deviceAddress, finalSenderId)
 
                 // Handle Node Announcement Frames (Discovery Pings)
                 if (meshMessage.destinationId == "ANNOUNCE" || decryptedText == "ANNOUNCE" || meshMessage.text == "ANNOUNCE") {
-                    if (meshMessage.ttl >= 3) {
-                        MeshManager.getScanner()?.updatePeerName(deviceAddress, finalSenderId)
-                    } else if (finalSenderId != deviceAddress) {
-                        MeshManager.getScanner()?.addRelayedPeer(
-                            peerId = finalSenderId,
-                            peerName = finalSenderId,
-                            relayedByAddress = hopSenderName
-                        )
-                    }
-
-                    // Relay ANNOUNCE to other 1-hop peers if TTL > 1
-                    if (meshMessage.ttl > 1) {
-                        val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
-                        val targetPeerAddresses = activePeers
-                            .filter { it.hops == 1 }
-                            .filter {
-                                it.id != deviceAddress &&
-                                        !it.name.equals(finalSenderId, ignoreCase = true) &&
-                                        !it.name.equals(hopSenderName, ignoreCase = true)
-                            }
-                            .map { it.id }
-
-                        if (targetPeerAddresses.isNotEmpty()) {
-                            delay(400)
-                            val relayAnnounce = meshMessage.copy(
-                                senderId = finalSenderId,
-                                ttl = meshMessage.ttl - 1,
-                                via = MeshManager.activeUserName
-                            )
-                            GattClientManager(context).relayToAllPeers(targetPeerAddresses, relayAnnounce)
-                        }
-                    }
                     return@launch
                 }
 
@@ -168,7 +131,7 @@ class GattServerManager(private val context: Context) {
                     isFromMe = false
                 )
 
-                // ONLY save to local inbox if message is intended for ME or BROADCAST
+                // Save to local inbox if message is intended for ME or BROADCAST
                 if (isIntendedForMe) {
                     ChatRepository.addMessage(receivedMessage)
                     if (receivedMessage.isEmergency) {
@@ -178,60 +141,9 @@ class GattServerManager(private val context: Context) {
                             decryptedText
                         )
                     }
-                } else {
-                    Log.d("GattServer", "Relay Node: DM for '${meshMessage.destinationId}' received. Relaying without storing in local inbox.")
                 }
 
-                // ONLY update direct neighbor's name if this was a DIRECT 1-hop transmission (TTL >= 3)
-                if (meshMessage.ttl >= 3) {
-                    MeshManager.getScanner()?.updatePeerName(deviceAddress, finalSenderId)
-                }
-
-                // Only register a 2-hop relayed peer if the packet was ACTUALLY relayed (TTL < 3)
-                if (meshMessage.ttl < 3 &&
-                    finalSenderId != deviceAddress &&
-                    finalSenderId != "02:00:00:00:00:00" &&
-                    finalSenderId != "ME" &&
-                    finalSenderId != "BROADCAST"
-                ) {
-                    MeshManager.getScanner()?.addRelayedPeer(
-                        peerId = finalSenderId,
-                        peerName = finalSenderId,
-                        relayedByAddress = hopSenderName
-                    )
-                }
-
-                // MULTI-HOP FORWARDING (EVENT-DRIVEN IMMEDIATE RELAY)
-                // Forward if TTL > 1 AND (it's a BROADCAST OR it's a DM meant for someone else)
-                val shouldRelay = meshMessage.ttl > 1 &&
-                        (meshMessage.destinationId == "BROADCAST" || !meshMessage.destinationId.equals(myProfileName, ignoreCase = true))
-
-                if (shouldRelay) {
-                    val nextHopTtl = meshMessage.ttl - 1
-                    val relayMessage = meshMessage.copy(
-                        senderId = finalSenderId,
-                        ttl = nextHopTtl,
-                        via = MeshManager.activeUserName
-                    )
-
-                    val activePeers = MeshManager.getScanner()?.foundPeers?.value ?: emptyList()
-                    val targetPeerAddresses = activePeers
-                        .filter { it.hops == 1 }
-                        .filter {
-                            it.id != deviceAddress &&
-                                    !it.name.equals(finalSenderId, ignoreCase = true) &&
-                                    !it.name.equals(hopSenderName, ignoreCase = true)
-                        }
-                        .map { it.id }
-
-                    if (targetPeerAddresses.isNotEmpty()) {
-                        delay(300)
-                        Log.d("GattServer", "Event-Driven Multi-Hop Relaying (TTL: $nextHopTtl) via '${MeshManager.activeUserName}' to ${targetPeerAddresses.size} peers...")
-                        GattClientManager(context).relayToAllPeers(targetPeerAddresses, relayMessage)
-                    }
-                }
-
-                Log.d("GattServer", "Delivered & Multi-Hop Processed: $decryptedText")
+                Log.d("GattServer", "Direct BLE Message Delivered: $decryptedText")
             } catch (e: Exception) {
                 Log.e("GattServer", "JSON/Crypto Error: ${e.message}")
             }

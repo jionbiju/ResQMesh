@@ -11,7 +11,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BluetoothDisabled
 import androidx.compose.material.icons.filled.Campaign
-import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,7 +22,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.resqmesh.service.MeshManager
 import com.example.resqmesh.util.BleScanner
+import com.example.resqmesh.util.DiscoveredPeer
+import kotlinx.coroutines.flow.MutableStateFlow
 
 @Composable
 fun MessageListSection(
@@ -32,7 +34,26 @@ fun MessageListSection(
     onToggle: () -> Unit,
     onPeerClick: (String, String) -> Unit
 ) {
-    val realPeers by bleScanner.foundPeers.collectAsState()
+    val allPeers by bleScanner.foundPeers.collectAsState()
+    val isLoraConnected by (MeshManager.getLoraManager()?.isConnectedToLoraNode ?: MutableStateFlow(false)).collectAsState()
+    val loraNodeName by (MeshManager.getLoraManager()?.connectedNodeName ?: MutableStateFlow("Disconnected")).collectAsState()
+
+    // 1. BLE Section: All peers discovered via direct BLE or BLE multi-hop
+    val bleSectionPeers = remember(allPeers) {
+        allPeers.filter { it.relayedBy != "LoRa-433MHz" }
+    }
+
+    // 2. LoRa Section: Peers discovered ONLY via LoRa-433MHz AND not currently present in the BLE section
+    val loraSectionPeers = remember(allPeers, bleSectionPeers) {
+        val bleNames = bleSectionPeers.map { it.name.lowercase() }.toSet()
+        val bleIds = bleSectionPeers.map { it.id.lowercase() }.toSet()
+
+        allPeers.filter { peer ->
+            peer.relayedBy == "LoRa-433MHz" &&
+                    !bleNames.contains(peer.name.lowercase()) &&
+                    !bleIds.contains(peer.id.lowercase())
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         MeshStatusCard(
@@ -103,7 +124,7 @@ fun MessageListSection(
                                 color = MaterialTheme.colorScheme.onTertiaryContainer
                             )
                             Text(
-                                text = "Broadcasts to all nodes (1, 2 & 3 Hops away)",
+                                text = "Broadcasts over LoRa 433MHz & Direct BLE",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f)
                             )
@@ -124,21 +145,85 @@ fun MessageListSection(
                 }
             }
 
-            if (isActive && realPeers.isEmpty()) {
+            // --- SECTION 1: NEARBY BLE MESH ---
+            item {
+                Text(
+                    text = "📡 Nearby BLE Mesh (High-Speed • Files & Voice)",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp, start = 4.dp)
+                )
+            }
+
+            if (bleSectionPeers.isEmpty()) {
                 item {
-                    Text("Searching for nearby ResQmesh nodes...", color = Color.Gray, fontSize = 14.sp)
+                    Text(
+                        text = "No phones within direct BLE range (10–30m)",
+                        fontSize = 12.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            } else {
+                items(bleSectionPeers, key = { "ble_${it.id}" }) { peer ->
+                    PeerRowItem(
+                        peer = peer,
+                        badgeText = if (peer.hops > 1) "🟣 BLE Relayed" else "⚡ BLE Direct",
+                        badgeColor = if (peer.hops > 1) Color(0xFF9C27B0) else Color(0xFF2E7D32),
+                        onClick = { onPeerClick(peer.id, peer.name) }
+                    )
                 }
             }
-            
-            items(realPeers) { peer ->
-                PeerItem(
-                    name = peer.name,
-                    status = "ID: ${peer.id.take(16)}...",
-                    hops = peer.hops,
-                    relayedBy = peer.relayedBy,
-                    isOnline = peer.isOnline,
-                    onClick = { onPeerClick(peer.id, peer.name) }
-                )
+
+            // --- SECTION 2: LONG-RANGE LORA 433MHz ---
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp, start = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "📡 Long-Range LoRa 433MHz (Text-Only)",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color(0xFFFF9800),
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (isLoraConnected) "Connected ($loraNodeName)" else "ESP32 Offline",
+                        fontSize = 11.sp,
+                        color = if (isLoraConnected) Color(0xFF4CAF50) else Color.Gray
+                    )
+                }
+            }
+
+            if (!isLoraConnected) {
+                item {
+                    Text(
+                        text = "Connect to an ESP32 LoRa node to reach beyond BLE range.",
+                        fontSize = 12.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            } else if (loraSectionPeers.isEmpty()) {
+                item {
+                    Text(
+                        text = "Listening on 433 MHz... Remote LoRa nodes will appear here.",
+                        fontSize = 12.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            } else {
+                items(loraSectionPeers, key = { "lora_${it.id}" }) { peer ->
+                    PeerRowItem(
+                        peer = peer,
+                        badgeText = "📡 LoRa 433MHz",
+                        badgeColor = Color(0xFFFF9800),
+                        onClick = { onPeerClick(peer.id, peer.name) }
+                    )
+                }
             }
         }
     }
@@ -182,12 +267,10 @@ fun MeshStatusCard(isActive: Boolean, onToggle: () -> Unit) {
 }
 
 @Composable
-fun PeerItem(
-    name: String, 
-    status: String, 
-    isOnline: Boolean, 
-    hops: Int = 1,
-    relayedBy: String? = null,
+fun PeerRowItem(
+    peer: DiscoveredPeer,
+    badgeText: String,
+    badgeColor: Color,
     onClick: () -> Unit
 ) {
     Card(
@@ -205,51 +288,35 @@ fun PeerItem(
                     .size(40.dp)
                     .clip(CircleShape)
                     .background(
-                        when {
-                            !isOnline -> Color.Gray
-                            hops > 1 -> Color(0xFF9C27B0)
-                            else -> Color(0xFF4CAF50)
-                        }
+                        if (!peer.isOnline) Color.Gray else badgeColor
                     ),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = if (hops > 1) "2H" else "1H",
+                    text = peer.name.take(1).uppercase(),
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 12.sp
+                    fontSize = 16.sp
                 )
             }
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(text = name, fontWeight = FontWeight.Bold)
+                Text(text = peer.name, fontWeight = FontWeight.Bold)
                 Text(
-                    text = if (!isOnline) "Offline Node" else if (hops > 1) "Relayed Node ($status)" else status, 
-                    fontSize = 12.sp, 
+                    text = if (!peer.isOnline) "Offline Node" else "ID: ${peer.id.take(12)}...",
+                    fontSize = 12.sp,
                     color = Color.Gray
                 )
             }
             Surface(
-                color = when {
-                    !isOnline -> Color.Gray.copy(alpha = 0.15f)
-                    hops > 1 -> Color(0xFF9C27B0).copy(alpha = 0.15f)
-                    else -> Color(0xFF4CAF50).copy(alpha = 0.15f)
-                },
+                color = if (!peer.isOnline) Color.Gray.copy(alpha = 0.15f) else badgeColor.copy(alpha = 0.15f),
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Text(
-                    text = when {
-                        !isOnline -> "🔴 Offline"
-                        hops > 1 -> "🟣 2 Hops"
-                        else -> "🟢 Direct"
-                    },
+                    text = if (!peer.isOnline) "🔴 Offline" else badgeText,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
-                    color = when {
-                        !isOnline -> Color.Red
-                        hops > 1 -> Color(0xFF9C27B0)
-                        else -> Color(0xFF2E7D32)
-                    },
+                    color = if (!peer.isOnline) Color.Red else badgeColor,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }
